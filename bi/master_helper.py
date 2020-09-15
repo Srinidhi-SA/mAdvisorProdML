@@ -66,6 +66,7 @@ def load_dataset(spark,dataframe_context):
             bool_cols= list(df.select_dtypes(include=['bool']).columns)
             df[bool_cols] =df[bool_cols].astype('object')
             df = df.replace(GLOBALSETTINGS.DEFAULT_NULL_VALUES, np.nan)
+            df = df.replace([' ',','],'_', regex=True)
             print("######## PANDAS ########### STARTED PANDAS FLOW ############# PANDAS ##############")
             dataframe_context._pandas_flag = True
             pyspark=False
@@ -841,7 +842,7 @@ def score_model_autoML(spark,linear_df,tree_df,dataframe_context,df_helper_linea
             try:
                 trainedModel.Predict()
             except Exception as e:
-                CommonUtils.print_errors_and_store_traceback(LOGGER,"xgboost",e)
+                CommonUtils.print_errors_and_store_traceback(LOGGER,"Neural_Network_Sklearn",e)
                 CommonUtils.save_error_messages(errorURL,APP_NAME,e,ignore=ignoreMsg)
             print("Scoring Done in ", time.time() - st,  " seconds.")
         elif "logisticregression" in selected_model_for_prediction:

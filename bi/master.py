@@ -50,7 +50,7 @@ def main(configJson):
             debugMode = True
             ignoreMsg = True
             # Test Configs are defined in bi/settings/configs/localConfigs
-            jobType = "training"
+            jobType = "story"
             if jobType == "testCase":
                 configJson = get_test_configs(jobType,testFor = "chisquare")
             else:
@@ -207,7 +207,7 @@ def main(configJson):
                         updateLevelCountCols_linear_df = colsToBin_linear_df
                         try:
                             for i in dataTypeChangeCols_linear_df:
-                                if i["columnType"]=="dimension":
+                                if i["columnType"]=="dimension" and i['colName'] in list(linear_df.columns):
                                     updateLevelCountCols_linear_df.append(i["colName"])
                         except:
                             pass
@@ -224,7 +224,7 @@ def main(configJson):
                         updateLevelCountCols_tree_df = colsToBin_tree_df
                         try:
                             for i in dataTypeChangeCols_tree_df:
-                                if i["columnType"]=="dimension":
+                                if i["columnType"]=="dimension" and i['colName'] in list(tree_df.columns):
                                     updateLevelCountCols_tree_df.append(i["colName"])
                         except:
                             pass
