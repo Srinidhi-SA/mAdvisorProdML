@@ -1,7 +1,7 @@
 pyarrow==0.12.1
 py4j==0.10.7
 statsmodels==0.9.0
-scikit-learn==0.23.2
+scikit-learn==0.22.1
 argparse==1.4.0
 statistics==1.0.3.5
 xgboost==0.82

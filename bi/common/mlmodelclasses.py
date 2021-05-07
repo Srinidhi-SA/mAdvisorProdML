@@ -6,10 +6,7 @@ import re
 import pandas as pd
 from sklearn import metrics
 from math import sqrt
-try:
-    from sklearn.externals import joblib
-except:
-    import joblib
+from sklearn.externals import joblib
 from bi.settings import setting as GLOBALSETTINGS
 from bi.common import utils as CommonUtils
 from sklearn.model_selection import KFold,StratifiedKFold,StratifiedShuffleSplit
