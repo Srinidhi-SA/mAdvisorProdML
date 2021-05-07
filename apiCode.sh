@@ -2,7 +2,8 @@
 rm -r dist
 mkdir dist/
 python3 setup.py bdist_egg
-ls -l
+ls -l 
+ls -l dist/
 cp -r dist/marlabs_bi_jobs-0.0.0-py3.6.egg SPARK_DOCKER/
 ls -l SPARK_DOCKER/
 cd API-CODE
