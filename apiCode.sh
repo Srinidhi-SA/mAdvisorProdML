@@ -1,4 +1,5 @@
 #! /bin/sh
+rm -r SPARK_DOCKER/marlabs_bi_jobs-0.0.0-py3.6.egg
 rm -r dist
 mkdir dist/
 python3 setup.py bdist_egg
