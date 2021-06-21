@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+import os
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from numpy import size, zeros, where
@@ -29,7 +31,7 @@ from scipy import linspace
 from pyspark.conf import SparkConf
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import regexp_extract, col
-
+import pyspark.sql.functions as F
 
 from .decorators import accepts
 from math import log10, floor
@@ -125,7 +127,19 @@ def get_spark_session(app_name='Demo App',hive_environment=True):
     if hive_environment:
         return SparkSession.builder.appName(app_name).config(conf=SparkConf()).enableHiveSupport().getOrCreate()
     else:
-        return SparkSession.builder.appName(app_name).getOrCreate()
+        # os.environ['PYSPARK_SUBMIT_ARGS'] = '--jars /home/keshav/pysparkExternalJars/jpmml-sparkml-executable-1.5.0.jar,' \
+        # ' ~/pysparkExternalJars/xgboost4j-0.72.jar, ~/pysparkExternalJars/xgboost4j-spark-0.72.jar pyspark-shell'
+        return SparkSession.builder.appName(app_name) \
+                        .getOrCreate()
+
+                        # .config("spark.executor.extraClassPath", '/home/keshav/pysparkExternalJars/jpmml-sparkml-executable-1.5.0.jar') \
+                        # .config("spark.driver.extraClassPath", '/home/keshav/pysparkExternalJars/xgboost4j-0.72.jar') \
+                        # .config("spark.driver.extraClassPath", '/home/keshav/pysparkExternalJars/xgboost4j-spark-0.72.jar') \
+                        # .config("spark.executor.extraClassPath", '/home/keshav/pysparkExternalJars/xgboost4j-0.72.jar') \
+                        # .config("spark.executor.extraClassPath", '/home/keshav/pysparkExternalJars/xgboost4j-spark-0.72.jar') \
+                        # .config("spark.driver.extraClassPath", '/home/keshav/pysparkExternalJars/jpmml-sparkml-executable-1.5.0.jar') \
+                        # .config("spark.executor.extraClassPath", '/home/keshav/pysparkExternalJars/jpmml-sparkml-executable-1.5.0.jar') \
+
 
 def clean(x):
     from re import sub
@@ -230,6 +244,7 @@ def get_level_count_dict(df,categorical_columns,separator,output_type="string",d
     for col in categorical_columns:
         if dataType == "spark":
             count_dict[col] = len(df.select(col).distinct().collect())
+            # count_dict[col] = df.agg((F.countDistinct(col).alias(col))).first().asDict()[col]
         else:
             count_dict[col] = len(df[col].unique())
         out.append(col)

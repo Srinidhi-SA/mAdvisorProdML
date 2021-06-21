@@ -54,7 +54,10 @@ from sklearn.metrics import r2_score,explained_variance_score
 from math import sqrt
 import pandas as pd
 import numpy as np
-from sklearn.externals import joblib
+try:
+    from sklearn.externals import joblib
+except:
+    import joblib
 from sklearn2pmml import sklearn2pmml
 from sklearn2pmml import PMMLPipeline
 
@@ -146,7 +149,10 @@ class TensorFlowRegScript(object):
             x_train = MLUtils.create_dummy_columns(x_train,[x for x in categorical_columns if x != result_column])
             x_test = MLUtils.create_dummy_columns(x_test,[x for x in categorical_columns if x != result_column])
             x_test = MLUtils.fill_missing_columns(x_test,x_train.columns,result_column)
-
+            if self._dataframe_context.get_trainerMode() == "autoML":
+                automl_enable=True
+            else:
+                automl_enable=False
             st = time.time()
 
             CommonUtils.create_update_and_save_progress_message(self._dataframe_context,self._scriptWeightDict,self._scriptStages,self._slug,"training","info",display=True,emptyBin=False,customMsg=None,weightKey="total")
@@ -157,9 +163,107 @@ class TensorFlowRegScript(object):
                 self._result_setter.set_hyper_parameter_results(self._slug,None)
                 evaluationMetricDict = algoSetting.get_evaluvation_metric(Type="Regression")
                 evaluationMetricDict["displayName"] = GLOBALSETTINGS.SKLEARN_EVAL_METRIC_NAME_DISPLAY_MAP[evaluationMetricDict["name"]]
-                params_tf=algoSetting.get_tf_params_dict()
-                algoParams = algoSetting.get_params_dict()
-                algoParams = {k:v for k,v in list(algoParams.items())}
+                if self._dataframe_context.get_trainerMode() == "autoML":
+                    # automl_enable = True
+                    train_size = x_train.shape[0]
+                    if train_size < 10000:
+                        units = '32'
+                        if train_size >= 500:
+                            units = '64'
+                        rate = '0.1'
+                    elif train_size >= 10000 and train_size < 20000:
+                        units = '32'
+                        rate = '0.2'
+                    elif train_size >= 20000 and train_size < 40000:
+                        units = '64'
+                        rate = '0.3'
+                    elif train_size >= 60000:
+                        units = '128'
+                        rate = '0.5'
+                    else:
+                        rate = '0.5'
+                        units = '256'
+                    params_tf = {
+                                'hidden_layer_info':
+                                {
+                                    '1': {
+                                    'layerId': 2,
+                                    'rate': rate,
+                                    'layer': 'Dropout'
+                                    },
+                                    '3': {
+                                    'layerId': 4,
+                                    'rate': rate,
+                                    'layer': 'Dropout'
+                                    },
+                                    '4': {
+                                    'bias_constraint': None,
+                                    'units': units,
+                                    'use_bias': True,
+                                    'layer': 'Dense',
+                                    'bias_initializer': 'glorot_uniform',
+                                    'layerId': 5,
+                                    'activity_regularizer': None,
+                                    'kernel_constraint': None,
+                                    'activation': 'softmax',
+                                    'kernel_initializer': 'glorot_uniform',
+                                    'kernel_regularizer': None,
+                                    'batch_normalization': 'True',
+                                    'bias_regularizer': None
+                                    },
+                                    '0': {
+                                    'bias_constraint': None,
+                                    'units': units,
+                                    'use_bias': True,
+                                    'layer': 'Dense',
+                                    'bias_initializer': 'glorot_uniform',
+                                    'layerId': 1,
+                                    'activity_regularizer': None,
+                                    'kernel_constraint': None,
+                                    'activation': 'relu',
+                                    'kernel_initializer': 'glorot_uniform',
+                                    'kernel_regularizer': None,
+                                    'batch_normalization': 'True',
+                                    'bias_regularizer': None
+                                    },
+                                    '2': {
+                                    'bias_constraint': None,
+                                    'units': int(int(units)/2),
+                                    'use_bias': True,
+                                    'layer': 'Dense',
+                                    'bias_initializer': 'glorot_uniform',
+                                    'layerId': 3,
+                                    'activity_regularizer': None,
+                                    'kernel_constraint': None,
+                                    'activation': 'relu',
+                                    'kernel_initializer': 'glorot_uniform',
+                                    'kernel_regularizer': None,
+                                    'batch_normalization': 'True',
+                                    'bias_regularizer': None
+                                    }
+                                }
+                                }
+                    algoParams = {
+                                    'layer': 'Dense',
+                                    'loss': 'mean_absolute_error',
+                                    'optimizer': 'Adam',
+                                    'batch_size': min(int(train_size/100), 300),
+                                    'number_of_epochs': 100,
+                                    'metrics': 'mean_squared_error'
+                                    }
+
+                    if train_size <= 500:
+                        algoParams['batch_size'] = int(train_size/10)
+                    elif train_size > 500 and train_size < 2000:
+                        algoParams['batch_size'] = int(train_size/50)
+                    elif train_size > 500 and train_size < 30000:
+                        batch_size = list(np.random.uniform(low = 100, high = 300, size = (29500,)))
+                        batch_size.sort()
+                        algoParams['batch_size'] = int(batch_size[train_size - 500])
+                else:
+                    params_tf=algoSetting.get_tf_params_dict()
+                    algoParams = algoSetting.get_params_dict()
+                    algoParams = {k:v for k,v in list(algoParams.items())}
 
                 model = tf.keras.models.Sequential()
                 first_layer_flag=True
@@ -225,8 +329,10 @@ class TensorFlowRegScript(object):
                 bestEstimator = model
             print(model.summary())
             trainingTime = time.time()-st
-            y_score = bestEstimator.predict(x_test)
-            y_score= list(y_score.flatten())
+            y_score1 = bestEstimator.predict(x_test)
+            y_score1 = pd.DataFrame(y_score1)
+            y_score = y_score1.loc[:,0]
+            y_test.reset_index(inplace=True, drop=True)
             try:
                 y_prob = bestEstimator.predict_proba(x_test)
             except:
@@ -486,15 +592,19 @@ class TensorFlowRegScript(object):
             model_columns = self._dataframe_context.get_model_features()
             print("model_columns",model_columns)
 
-            df = self._data_frame.toPandas()
+            try:
+                df = self._data_frame.toPandas()
+            except:
+                df = self._data_frame.copy()
             # pandas_df = MLUtils.factorize_columns(df,[x for x in categorical_columns if x != result_column])
             pandas_df = MLUtils.create_dummy_columns(df,[x for x in categorical_columns if x != result_column])
             pandas_df = MLUtils.fill_missing_columns(pandas_df,model_columns,result_column)
 
             if uid_col:
                 pandas_df = pandas_df[[x for x in pandas_df.columns if x != uid_col]]
-            y_score = trained_model.predict(pandas_df)
-            y_score= list(y_score.flatten())
+            y_score1 = trained_model.predict(pandas_df)
+            y_score1 = pd.DataFrame(y_score1)
+            y_score = y_score1.loc[:,0]
             scoreKpiArray = MLUtils.get_scored_data_summary(y_score)
             kpiCard = NormalCard()
             kpiCardData = [KpiData(data=x) for x in scoreKpiArray]

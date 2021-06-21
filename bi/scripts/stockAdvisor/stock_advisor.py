@@ -561,16 +561,17 @@ class StockAdvisor(object):
         relevantDf1.columns = ["time","closePerChange"]
         relevantDf2 = pandasDf[["time","source","title","overallSentiment"]]
         merged = pd.merge(relevantDf2,relevantDf1,on="time",how="inner")
-        merged = merged.sort_values(by=['closePerChange'],ascending=False)
+        merged = merged.sort_values(["time", "overallSentiment"])
+        merged = merged.sort_values(by=['closePerChange','overallSentiment'],ascending=(False,False))
         topIncrease = merged.iloc[0:2] #top2
         # print topIncrease.shape
-        merged = merged.sort_values(by=['closePerChange'],ascending=True)
+        merged = merged.sort_values(by=['closePerChange','overallSentiment'],ascending=(True,True))
         topDecrease = merged.iloc[0:2] #top2
         # print topDecrease.shape
         outDf = pd.concat([topIncrease,topDecrease])
         outDf["time"] = outDf["time"].apply(self.change_date_format)
         # print outDf.shape
-        output = [["Date","% increase/ Decrease stock Price","Source","Title","Sentiment"]]
+        output = [["Date","% Increase/ Decrease Stock Price","Source","Title","Sentiment"]]
         for idx,dfRow in outDf.iterrows():
             row = [dfRow["time"],str(CommonUtils.round_sig(dfRow["closePerChange"],sig=2))+"%",dfRow["source"],dfRow["title"],CommonUtils.round_sig(dfRow["overallSentiment"],sig=2)]
             output.append(row)
@@ -578,6 +579,7 @@ class StockAdvisor(object):
 
     def get_top_articles(self,pandasDf):
         relevantDf = pandasDf[["time","source","title","overallSentiment"]]
+        relevantDf = relevantDf.sort_values(["time", "overallSentiment"])
         relevantDf["sentimentPerChange"] = relevantDf["overallSentiment"].pct_change()
         relevantDf = relevantDf.fillna(0)
         relevantDf['sentimentPerChange'].replace([np.inf, -np.inf], 100, inplace=True)
@@ -588,9 +590,9 @@ class StockAdvisor(object):
         topDecrease = relevantDf.iloc[0:3] #top3
         outDf = pd.concat([topIncrease,topDecrease])
         outDf["time"] = outDf["time"].apply(self.change_date_format)
-        output = [["Date","Source","Title","Sentiment","% increase/ Decrease"]]
+        output = [["Date", "Source", "Title", "Sentiment"]]
         for idx,dfRow in outDf.iterrows():
-            row = [dfRow["time"],dfRow["source"],dfRow["title"],CommonUtils.round_sig(dfRow["overallSentiment"],sig=2),str(CommonUtils.round_sig(dfRow["sentimentPerChange"],sig=2))+"%"]
+            row = [dfRow["time"], dfRow["source"], dfRow["title"],CommonUtils.round_sig(dfRow["overallSentiment"], sig=2)]
             output.append(row)
         return output
 
@@ -677,6 +679,8 @@ class StockAdvisor(object):
                     df = pd.read_json(self.dataFilePath.format("bluemix",stock_symbol))
                     df_historic = pd.read_json(self.dataFilePath.format("historical",stock_symbol))
                 #stockPriceData = df_historic.select(["date","close","open"]).toPandas()
+                df_historic = df_historic.sort_values("date")
+                df = df.sort_values("time")
                 stockPriceData = df_historic[["date", "close", "open"]]
                 stockPriceData["close"] = stockPriceData["close"].apply(float)
                 stockPriceData["open"] = stockPriceData["open"].apply(float)
@@ -819,6 +823,7 @@ class StockAdvisor(object):
                 regressionDf = masterDfDict[current_stock]
                 regressionDf.set_index('time', inplace=True)
                 remaining_stocks = list(set(self._stockNameList) - {current_stock})
+                print(current_stock)
                 # if len(remaining_stocks) > 0:
                 #     for other_stock in remaining_stocks:
                 #         colsToConsider = ["time","overallSentiment","close"]
@@ -833,6 +838,9 @@ class StockAdvisor(object):
                 regressionCoeff = self.run_regression(regressionDf,"close"+"_"+current_stock)
                 if 'Intercept' in regressionCoeff: del regressionCoeff['Intercept']
                 regCoeffArray = sorted([{"key":k,"value":v} for k,v in list(regressionCoeff.items())],key=lambda x:abs(x["value"]),reverse=True)
+                regCoeffArray = [i for i in regCoeffArray if i['value'] != 0.0]
+                regCoeffArray = sorted(regCoeffArray, key = lambda i: i['value'],reverse=True)
+                print(regCoeffArray)
                 stockDict[current_stock]["regCoefficient"] = regCoeffArray
                 # print current_stock , " : regCoeffArray : ", regCoeffArray
                 working_stock_list.append(current_stock)

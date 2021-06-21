@@ -261,11 +261,11 @@ class OneWayAnovaNarratives(object):
 
                 'best_category_by_mean': top_group_by_mean,
                 'best_category_by_mean_cont': round(100.0 * sum_top_group_by_mean / sum(totals), 2),
-                'best_category_by_mean_avg': NarrativesUtils.round_number(avg_top_group_by_mean,2),
+                'best_category_by_mean_avg': NarrativesUtils.round_number(avg_top_group_by_mean,2,False),
 
                 'best_category_by_total': top_group_by_total,
                 'best_category_by_total_cont': round(100.0 * sum_top_group_by_total / sum(totals), 2),
-                'best_category_by_total_avg': NarrativesUtils.round_number(avg_top_group_by_total,2),
+                'best_category_by_total_avg': NarrativesUtils.round_number(avg_top_group_by_total,2,False),
                 'best_category_by_total_sum' : NarrativesUtils.round_number(sum_top_group_by_total,2),
 
                 'bottom_groups': bottom_groups,

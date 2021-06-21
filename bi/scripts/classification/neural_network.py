@@ -9,6 +9,7 @@ from builtins import object
 from past.utils import old_div
 import json
 import time
+import re
 
 import humanize
 import numpy as np
@@ -20,7 +21,10 @@ try:
 except:
     import pickle
 
-from sklearn.externals import joblib
+try:
+    from sklearn.externals import joblib
+except:
+    import joblib
 from sklearn import metrics
 from sklearn2pmml import sklearn2pmml
 from sklearn2pmml import PMMLPipeline
@@ -58,6 +62,7 @@ class NeuralNetworkScript(object):
         self._dataframe_helper = df_helper
         self._dataframe_context = df_context
         self._pandas_flag = df_context._pandas_flag
+        self._actual_df = df_context.get_actual_df()
         self._spark = spark
         self._model_summary = {"confusion_matrix":{},"precision_recall_stats":{}}
         self._score_summary = {}
@@ -66,13 +71,20 @@ class NeuralNetworkScript(object):
         self._slug = self._model_slug_map["Neural Network (Sklearn)"]
         self._targetLevel = self._dataframe_context.get_target_level_for_model()
         self._datasetName = CommonUtils.get_dataset_name(self._dataframe_context.CSV_FILE)
-
+        try:
+            if not self._pandas_flag:
+                self._data_frame = self._data_frame.toPandas()
+                self._data_frame.columns = [re.sub("[[]|[]]|[<]","", col) for col in self._data_frame.columns.values]
+                self._dataframe_helper.set_train_test_data(self._data_frame)
+        except:
+            pass
         self._completionStatus = self._dataframe_context.get_completion_status()
         print(self._completionStatus,"initial completion status")
         self._analysisName = self._slug
         self._messageURL = self._dataframe_context.get_message_url()
         self._scriptWeightDict = self._dataframe_context.get_ml_model_training_weight()
         self._mlEnv = mlEnvironment
+        self._model=None
 
         self._scriptStages = {
             "initialization":{
@@ -168,78 +180,77 @@ class NeuralNetworkScript(object):
                 print(params_grid)
                 if hyperParamAlgoName == "gridsearchcv":
                     clfGrid = GridSearchCV(clf,params_grid)
-                    gridParams = clfGrid.get_params()
-                    hyperParamInitParam = {k:v for k,v in list(hyperParamInitParam.items()) if k in gridParams}
-                    clfGrid.set_params(**hyperParamInitParam)
-                    modelmanagement_=clfGrid.get_params()
-                    #clfGrid.fit(x_train,y_train)
-                    grid_param={}
-                    grid_param['params']=ParameterGrid(params_grid)
-                    #bestEstimator = clfGrid.best_estimator_
-                    modelFilepath = "/".join(model_filepath.split("/")[:-1])
-                    sklearnHyperParameterResultObj = SklearnGridSearchResult(grid_param,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
-                    resultArray = sklearnHyperParameterResultObj.train_and_save_models()
-                    #print resultArray
-
-                    resultArrayDict = {
-                                        "Model_Id" : [],
-                                        "Algorithm_Name": [],
-                                        "Metric_Selected": [],
-                                        "Accuracy": [],
-                                        "Precision": [],
-                                        "Recall": [],
-                                        "ROC_AUC": [],
-                                        "Run_Time": []
-                                        }
-                    for val in resultArray:
-                        resultArrayDict["Model_Id"].append(val["Model Id"])
-                        resultArrayDict["Algorithm_Name"].append(val["algorithmName"])
-                        resultArrayDict["Metric_Selected"].append(val["comparisonMetricUsed"])
-                        resultArrayDict["Accuracy"].append(val["Accuracy"])
-                        resultArrayDict["Precision"].append(val["Precision"])
-                        resultArrayDict["Recall"].append(val["Recall"])
-                        resultArrayDict["ROC_AUC"].append(val["ROC-AUC"])
-                        resultArrayDict["Run_Time"].append(val["Run Time(Secs)"])
-                        comparison_metric_used = val["comparisonMetricUsed"]
-
-                    resultArraydf = pd.DataFrame.from_dict(resultArrayDict)
-
-                    if comparison_metric_used == "Accuracy":
-                        resultArraydf = resultArraydf.sort_values(by = ['Accuracy'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-                    elif comparison_metric_used == "Recall":
-                        resultArraydf = resultArraydf.sort_values(by = ['Recall'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-                    elif comparison_metric_used == "Precision":
-                        resultArraydf = resultArraydf.sort_values(by = ['Precision'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-                    elif comparison_metric_used == "ROC-AUC":
-                        resultArraydf = resultArraydf.sort_values(by = ['ROC_AUC'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-
-                    print("BEST MODEL BY CHOSEN METRIC - ", best_model_by_metric_chosen)
-                    print(resultArraydf.head(20))
-                    hyper_st=time.time()
-                    bestEstimator = sklearnHyperParameterResultObj.getBestModel()
-                    bestParams = sklearnHyperParameterResultObj.getBestParam()
-                    bestEstimator = bestEstimator.set_params(**bestParams)
-                    bestEstimator.fit(x_train,y_train)
-                    bestEstimator.feature_names = list(x_train.columns.values)
-
-                    self._result_setter.set_hyper_parameter_results(self._slug,resultArray)
-                    self._result_setter.set_metadata_parallel_coordinates(self._slug,{"ignoreList":sklearnHyperParameterResultObj.get_ignore_list(),"hideColumns":sklearnHyperParameterResultObj.get_hide_columns(),"metricColName":sklearnHyperParameterResultObj.get_comparison_metric_colname(),"columnOrder":sklearnHyperParameterResultObj.get_keep_columns()})
                 elif hyperParamAlgoName == "randomsearchcv":
-                    hyper_st=time.time()
-                    clfRand = RandomizedSearchCV(clf,params_grid)
-                    clfRand.set_params(**hyperParamInitParam)
-                    modelmanagement_=clfRand.get_params()
-                    bestEstimator = None
+                    clfGrid = RandomizedSearchCV(clf,params_grid)
+                gridParams = clfGrid.get_params()
+                hyperParamInitParam = {k:v for k,v in list(hyperParamInitParam.items()) if k in gridParams}
+                clfGrid.set_params(**hyperParamInitParam)
+                modelmanagement_=clfGrid.get_params()
+                #clfGrid.fit(x_train,y_train)
+                grid_param={}
+                grid_param['params']=ParameterGrid(params_grid)
+                #bestEstimator = clfGrid.best_estimator_
+                modelFilepath = "/".join(model_filepath.split("/")[:-1])
+                #sklearnHyperParameterResultObj = SklearnGridSearchResult(clfGrid.cv_results_,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
+                sklearnHyperParameterResultObj = SklearnGridSearchResult(grid_param,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
+                resultArray = sklearnHyperParameterResultObj.train_and_save_models()
+                #print resultArray
+
+                resultArrayDict = {
+                                    "Model_Id" : [],
+                                    "Algorithm_Name": [],
+                                    "Metric_Selected": [],
+                                    "Accuracy": [],
+                                    "Precision": [],
+                                    "Recall": [],
+                                    "ROC_AUC": [],
+                                    "Run_Time": []
+                                    }
+                for val in resultArray:
+                    resultArrayDict["Model_Id"].append(val["Model Id"])
+                    resultArrayDict["Algorithm_Name"].append(val["algorithmName"])
+                    resultArrayDict["Metric_Selected"].append(val["comparisonMetricUsed"])
+                    resultArrayDict["Accuracy"].append(val["Accuracy"])
+                    resultArrayDict["Precision"].append(val["Precision"])
+                    resultArrayDict["Recall"].append(val["Recall"])
+                    resultArrayDict["ROC_AUC"].append(val["ROC-AUC"])
+                    resultArrayDict["Run_Time"].append(val["Run Time(Secs)"])
+                    comparison_metric_used = val["comparisonMetricUsed"]
+
+                resultArraydf = pd.DataFrame.from_dict(resultArrayDict)
+
+                if comparison_metric_used == "Accuracy":
+                    resultArraydf = resultArraydf.sort_values(by = ['Accuracy'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                elif comparison_metric_used == "Recall":
+                    resultArraydf = resultArraydf.sort_values(by = ['Recall'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                elif comparison_metric_used == "Precision":
+                    resultArraydf = resultArraydf.sort_values(by = ['Precision'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                elif comparison_metric_used == "ROC-AUC":
+                    resultArraydf = resultArraydf.sort_values(by = ['ROC_AUC'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+
+                print("BEST MODEL BY CHOSEN METRIC - ", best_model_by_metric_chosen)
+                print(resultArraydf.head(20))
+                hyper_st=time.time()
+                bestEstimator = sklearnHyperParameterResultObj.getBestModel()
+                bestParams = sklearnHyperParameterResultObj.getBestParam()
+                bestEstimator = bestEstimator.set_params(**bestParams)
+                bestEstimator.fit(x_train,y_train)
+                bestEstimator.feature_names = list(x_train.columns.values)
+
+                self._result_setter.set_hyper_parameter_results(self._slug,resultArray)
+                self._result_setter.set_metadata_parallel_coordinates(self._slug,{"ignoreList":sklearnHyperParameterResultObj.get_ignore_list(),"hideColumns":sklearnHyperParameterResultObj.get_hide_columns(),"metricColName":sklearnHyperParameterResultObj.get_comparison_metric_colname(),"columnOrder":sklearnHyperParameterResultObj.get_keep_columns()})
+
             else:
                 #evaluationMetricDict = {"name":GLOBALSETTINGS.CLASSIFICATION_MODEL_EVALUATION_METRIC}
                 evaluationMetricDict =algoSetting.get_evaluvation_metric(Type="CLASSIFICATION")
                 evaluationMetricDict["displayName"] = GLOBALSETTINGS.SKLEARN_EVAL_METRIC_NAME_DISPLAY_MAP[evaluationMetricDict["name"]]
                 self._result_setter.set_hyper_parameter_results(self._slug,None)
                 algoParams = algoSetting.get_params_dict()
+                hyperParamAlgoName = 'None'
                 algoParams = {k:v for k,v in list(algoParams.items()) if k in list(clf.get_params().keys())}
                 clf.set_params(**algoParams)
                 modelmanagement_=clf.get_params()
@@ -262,6 +273,7 @@ class NeuralNetworkScript(object):
                     bestEstimator = clf
 
             trainingTime = time.time()-st
+            self._model=bestEstimator
             y_score = bestEstimator.predict(x_test)
             try:
                 y_prob = bestEstimator.predict_proba(x_test)
@@ -391,9 +403,14 @@ class NeuralNetworkScript(object):
                 runtime = round((time.time() - hyper_st),2)
 
             try:
-                modelPmmlPipeline = PMMLPipeline([
-                  ("pretrained-estimator", objs["trained_model"])
-                ])
+                if automl_enable:
+                    modelPmmlPipeline = PMMLPipeline([
+                        ("pretrained-estimator", objs["trained_model"].bestEstimator)
+                    ])
+                else:
+                    modelPmmlPipeline = PMMLPipeline([
+                        ("pretrained-estimator", objs["trained_model"])
+                    ])
                 modelPmmlPipeline.target_field = result_column
                 modelPmmlPipeline.active_fields = np.array([col for col in x_train.columns if col != result_column])
                 sklearn2pmml(modelPmmlPipeline, pmml_filepath, with_repr = True)
@@ -463,11 +480,14 @@ class NeuralNetworkScript(object):
                     "modelFeatureList":self._model_summary.get_feature_list(),
                     "levelMapping":self._model_summary.get_level_map_dict(),
                     "slug":self._model_summary.get_slug(),
-                    "name":self._model_summary.get_algorithm_name()
+                    "name":self._model_summary.get_algorithm_name(),
+                    "hyperparamalgoname":hyperParamAlgoName
                 }
 
             self._model_management = MLModelSummary()
             print(modelmanagement_)
+            if 'param_distributions' in modelmanagement_.keys():
+                modelmanagement_["param_grid"] = modelmanagement_.pop("param_distributions")
             if not algoSetting.is_hyperparameter_tuning_enabled():
                 self._model_management.set_epsilon(data=modelmanagement_['epsilon'])
                 self._model_management.set_activation(data=modelmanagement_['activation'])
@@ -502,6 +522,7 @@ class NeuralNetworkScript(object):
                 self._model_management.set_target_variable(result_column)#target column name
                 self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M ')))#creation date
                 self._model_management.set_datasetName(self._datasetName)
+                self._model_management.set_hyperParamAlgoName(hyperParamAlgoName)
             else:
                 self._model_management.set_epsilon(data=modelmanagement_['param_grid']['epsilon'][0])
                 self._model_management.set_activation(data=modelmanagement_['param_grid']['activation'][0])
@@ -536,6 +557,7 @@ class NeuralNetworkScript(object):
                 self._model_management.set_target_variable(result_column)#target column name
                 self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M ')))#creation date
                 self._model_management.set_datasetName(self._datasetName)
+                self._model_management.set_hyperParamAlgoName(hyperParamAlgoName)
 
 
             modelManagementSummaryJson =[
@@ -557,6 +579,7 @@ class NeuralNetworkScript(object):
                         ["Target Column Value",self._model_management.get_target_level()],
                         ["Number Of Independent Variables",self._model_management.get_no_of_independent_variables()],
                         ["Algorithm",self._model_management.get_algorithm_name()],
+                        ["HyperParamAlgoName",self._model_management.get_hyperParamAlgoName()],
                         ["Model Validation",self._model_management.get_validation_method()],
                         ["epsilon",str(self._model_management.get_epsilon())],
                         ["activation",str(self._model_management.get_activation())],
@@ -715,7 +738,11 @@ class NeuralNetworkScript(object):
         if result_column in df.columns:
             df.drop(result_column, axis=1, inplace=True)
         df = df.rename(index=str, columns={"predicted_class": result_column})
-        df.to_csv(score_data_path,header=True,index=False)
+        df = df.round({'predicted_probability':2})
+        df_new = self._actual_df.copy(deep=True)
+        df_new['predicted_class'] = list(df[result_column])
+        df_new['predicted_probability'] = list(df['predicted_probability'])
+        df_new.to_csv(score_data_path,header=True,index=False)
         uidCol = self._dataframe_context.get_uid_column()
         if uidCol == None:
             uidCols = self._metaParser.get_suggested_uid_columns()

@@ -281,7 +281,7 @@ def get_layers_for_network_module(nnpt_params, task_type, first_layer_units):
             else:
                 layer_units_ip = layer_dict["units_ip"]
             layer_units_op = layer_dict["units_op"]
-            layer_bias = layer_dict["bias"]
+            #layer_bias = layer_dict["bias"]
             layer_activation = layer_dict["activation"]
             layer_batchnormalization = layer_dict["batchnormalization"]
             layer_dropout = layer_dict["dropout"]
@@ -292,7 +292,7 @@ def get_layers_for_network_module(nnpt_params, task_type, first_layer_units):
             print("~"*50)
 
             if layer_name == "Linear":
-                main_layer = nn.Linear(in_features = layer_units_ip, out_features = layer_units_op, bias = layer_bias)
+                main_layer = nn.Linear(in_features = layer_units_ip, out_features = layer_units_op)
                 layers.append(main_layer)
                 if layer_activation != None:
                     if layer_activation["name"] == "ELU":
@@ -355,7 +355,7 @@ def get_layers_for_network_module(nnpt_params, task_type, first_layer_units):
                     if layer_activation["name"] == "AdaptiveLogSoftmaxWithLoss":
                         activation = nn.AdaptiveLogSoftmaxWithLoss(n_classes = layer_activation["n_classes"], cutoffs = layer_activation["cutoffs"], div_value = layer_activation["div_value"], head_bias = layer_activation["head_bias"])
 
-                    layers.append(activation)
+                        layers.append(activation)
                 else:
                     pass
 
@@ -381,7 +381,7 @@ def get_layers_for_network_module(nnpt_params, task_type, first_layer_units):
                     if layer_batchnormalization["name"] == "LocalResponseNorm":
                         batch_normalization = nn.LocalResponseNorm(size = layer_batchnormalization["size"], alpha = layer_batchnormalization["alpha"], beta = layer_batchnormalization["beta"], k = layer_batchnormalization["k"])
 
-                    layers.append(batch_normalization)
+                        layers.append(batch_normalization)
                 else:
                     pass
 
@@ -395,7 +395,7 @@ def get_layers_for_network_module(nnpt_params, task_type, first_layer_units):
                     if layer_dropout["name"] == "AlphaDropout":
                         dropout = nn.AlphaDropout(p = layer_dropout["p"], inplace = False)
 
-                    layers.append(dropout)
+                        layers.append(dropout)
                 else:
                     pass
 
@@ -699,7 +699,7 @@ def get_nnptc_params_dict(levels,columns,rows):
     if not large:
         if rows > 10000:
             nnptc_params["batch_size"] = 64
-            nnptc_params["number_of_epochs"] = 250
+            nnptc_params["number_of_epochs"] = 50
         if columns < nnptc_params["hidden_layer_info"]["1"]["units_op"]:
             nnptc_params["hidden_layer_info"]["1"]["units_op"] = 4
             nnptc_params["hidden_layer_info"]["2"]["units_ip"] = 4
@@ -722,3 +722,216 @@ def get_nnptc_params_dict(levels,columns,rows):
         else:
             nnptc_params["hidden_layer_info"]["3"]["activation"]["name"] = "Sigmoid"
     return nnptc_params
+
+def get_nnptr_params_dict(levels,columns,rows):
+    large = False
+    if columns > 35 :
+        large = True
+        nnptr_params = {
+            "hidden_layer_info": {
+              "1": {
+                "weight_constraint": {
+                  "constraint": "None"
+                },
+                "units_op": 16,
+                "units_ip": 32,
+                "activation": {
+                  "name": "ReLU"
+                },
+                "bias_init": {
+                  "name": "Uniform",
+                  "lower_bound": 0,
+                  "upper_bound": 1
+                },
+                "weight_init": {
+                  "name": "Kaiming_Normal",
+                  "mode": "fan_in",
+                  "nonlinearity": "leaky_relu",
+                  "a": 0
+                },
+                "layer": "Linear",
+                "dropout": {
+                  "name": "Dropout",
+                  "p": 0.5
+                },
+                "batchnormalization": {
+                  "name": "None"
+                }
+              },
+              "2": {
+                "weight_constraint": {
+                  "constraint": "None"
+                },
+                "units_op": 8,
+                "units_ip": 16,
+                "activation": {
+                  "name": "ReLU"
+                },
+                "bias_init": {
+                  "name": "Uniform",
+                  "lower_bound": 0,
+                  "upper_bound": 1
+                },
+                "weight_init": {
+                  "name": "Kaiming_Normal",
+                  "mode": "fan_in",
+                  "nonlinearity": "leaky_relu",
+                  "a": 0
+                },
+                "layer": "Linear",
+                "dropout": {
+                  "name": "Dropout",
+                  "p": 0.5
+                },
+                "batchnormalization": {
+                  "name": "None"
+                }
+              },
+              "3": {
+                "weight_constraint": {
+                  "constraint": "None"
+                },
+                "units_op": 2,
+                "units_ip": 8,
+                "activation": {
+                  "name": "linear"
+                },
+                "bias_init": {
+                  "name": "Uniform",
+                  "lower_bound": 0,
+                  "upper_bound": 1
+                },
+                "weight_init": {
+                  "name": "Kaiming_Normal",
+                  "mode": "fan_in",
+                  "nonlinearity": "leaky_relu",
+                  "a": 0
+                },
+                "layer": "Linear",
+                "dropout": {
+                  "name": "None",
+                  "p": "None"
+                },
+                "batchnormalization": {
+                  "name": "None"
+                }
+              }
+            },
+            "number_of_epochs": 50,
+            "loss": {
+              "ignore_index": None,
+              "loss": "L1Loss",
+              "weight": None,
+              "reduction": "mean"
+            },
+            "optimizer": {
+              "lr": 0.001,
+              "weight_decay": 0,
+              "betas": "(0.9,0.999)",
+              "amsgrad": "False",
+              "optimizer": "Adam",
+              "eps": 1e-08
+            },
+            "regularizer": {
+              "regularizer": "l2_regularizer",
+              "l2_decay": 0
+            },
+            "batch_size": 32
+          }
+    else:
+        nnptr_params = {
+            "hidden_layer_info": {
+              "1": {
+                "weight_constraint": {
+                  "constraint": "None"
+                },
+                "units_op": 8,
+                "units_ip": 16,
+                "activation": {
+                  "name": "ReLU"
+                },
+                "bias_init": {
+                  "name": "Normal",
+                  "std": 1,
+                  "mean": 0
+                },
+                "weight_init": {
+                  "name": "Kaiming_Normal",
+                  "mode": "fan_in",
+                  "nonlinearity": "leaky_relu",
+                  "a": 0
+                },
+                "layer": "Linear",
+                "dropout": {
+                  "name": "Dropout",
+                  "p": 0.2
+                },
+                "batchnormalization": {
+                  "name": "None"
+                }
+              },
+              "2": {
+                "weight_constraint": {
+                  "constraint": "None"
+                },
+                "units_op": 2,
+                "units_ip": 8,
+                "activation": {
+                  "name": "linear"
+                },
+                "bias_init": {
+                  "name": "Uniform",
+                  "lower_bound": 0,
+                  "upper_bound": 1
+                },
+                "weight_init": {
+                  "name": "Kaiming_Normal",
+                  "mode": "fan_in",
+                  "nonlinearity": "leaky_relu",
+                  "a": 0
+                },
+                "layer": "Linear",
+                "dropout": {
+                  "name": "None",
+                  "p": "None"
+                },
+                "batchnormalization": {
+                  "name": "None"
+                }
+              }
+            },
+            "number_of_epochs": 50,
+            "loss": {
+              "ignore_index": None,
+              "loss": "L1Loss",
+              "weight": None,
+              "reduction": "mean"
+            },
+            "optimizer": {
+              "lr": 0.001,
+              "weight_decay": 0,
+              "betas": "(0.9,0.999)",
+              "amsgrad": "False",
+              "optimizer": "Adam",
+              "eps": 1e-08
+            },
+            "regularizer": {
+              "regularizer": "l2_regularizer",
+              "l2_decay": 0
+            },
+            "batch_size": 32
+          }
+    if not large:
+        if rows > 10000:
+            nnptr_params["batch_size"] = 64
+            nnptr_params["number_of_epochs"] = 50
+        if columns < nnptr_params["hidden_layer_info"]["1"]["units_op"]:
+            nnptr_params["hidden_layer_info"]["1"]["units_op"] = 4
+            nnptr_params["hidden_layer_info"]["2"]["units_ip"] = 4
+        nnptr_params["hidden_layer_info"]["2"]["units_op"] = len(levels)
+    else:
+        if rows > 10000:
+            nnptr_params["batch_size"] = 64
+            nnptr_params["number_of_epochs"] = 100
+        nnptr_params["hidden_layer_info"]["3"]["units_op"] = len(levels)
+    return nnptr_params

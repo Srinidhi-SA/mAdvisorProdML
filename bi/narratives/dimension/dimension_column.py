@@ -132,7 +132,14 @@ class DimensionColumnNarrative(object):
         if self._pandas_flag:
             for column in self._dataframe_helper.get_string_columns():
                 uniqueVals = sampleData[column].unique().tolist()
-                if len(uniqueVals) > 0 and metaHelperInstance.get_datetime_format_pandas([self._data_frame[column].sort_values(ascending=False)[0]])!=None:
+                def sort_mixed_list(mixed_list):
+                    mixed_list.sort(key=lambda e: (isinstance(e, str), e),reverse=True)
+                    return mixed_list
+                try:
+                    l=self._data_frame[column].sort_values(ascending=False)[0]
+                except:
+                    l = sort_mixed_list(mixed_list=list(self._data_frame[column]))[0]
+                if len(uniqueVals) > 0 and metaHelperInstance.get_datetime_format_pandas([l])!=None:
                     dateColumnFormat = metaHelperInstance.get_datetime_format_pandas(uniqueVals)
                     l1.append(column)
                 else:

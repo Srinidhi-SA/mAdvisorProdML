@@ -16,7 +16,7 @@
   <b>Segment {{top_levels[0]}} and segment {{top_levels[1]}}  </b> are the two largest {{plural_colname}}, accounting for
   <b> {{top_levels_percent|round(1)}}% </b> of the total observations.
 {% elif top_levels | length >2 %}
-  The top {{top_levels | length}} {{plural_colname}} including segment {{top_levels[0]}} and segment {{top_levels[1]}} account for
+  The top {{top_levels | length}} {{plural_colname}} including <b>segment {{top_levels[0]}} and segment {{top_levels[1]}}</b> account for
   <b> {{top_levels_percent|round(1)}}% </b>of the total observations.
 {% endif %}
 {% if bottom_level_percent >= 0.01 %}
@@ -42,9 +42,9 @@
 {{blockSplitter}}
 <p class = "txt-justify">
 {% if best_second_share | length ==1 %}
-The segment <b> {{levels[best_second_share[0]]}}</b> has the
+The <b>segment  {{levels[best_second_share[0]]}}</b> has the
 {% elif best_second_share | length == 2 %}
-  The segments <b> {{levels[best_second_share[0]]}} and {{levels[best_second_share[1]]}}</b> have the
+  The <b>segments  {{levels[best_second_share[0]]}} and {{levels[best_second_share[1]]}}</b> have the
 {% elif best_second_share | length > 2 %}
   <b>Segment {{levels[best_second_share[0]]}}, segment {{levels[best_second_share[1]]}} and {{best_second_share | length - 2}} other
     {% if best_second_share | length == 3 %}
@@ -63,10 +63,10 @@ When it comes to <b>{{target}} - {{top_target}},
   segment {{levels[worst_top_share[0]]}}</b> seems to be the <b>least dominant segment</b> since {{top_target_shares[worst_top_share[0]] | round(1)}}%
   of its total observations are into that {{top_target}} category.
 {% elif worst_top_share | length == 2 %}
-  both segment {{levels[worst_top_share[0]]}} and segment {{levels[worst_top_share[1]]}}</b> seems to be the least dominant segment with {{top_target_shares[worst_top_share[0]] | round(1)}}%
+  both segment {{levels[worst_top_share[0]]}} and segment {{levels[worst_top_share[1]]}}</b> seems to be the <b>least dominant segment</b> with {{top_target_shares[worst_top_share[0]] | round(1)}}%
   of their total observations from each of the categories.
 {% elif worst_top_share | length > 2 %}
-  there are {{worst_top_share|length}} {{plural_colname}} including segment {{levels[worst_top_share[0]]}} and segment {{levels[worst_top_share[1]]}}</b> which are the least dominant segment with {{top_target_shares[worst_top_share[0]] | round(1)}}%
+  there are {{worst_top_share|length}} {{plural_colname}} including segment {{levels[worst_top_share[0]]}} and segment {{levels[worst_top_share[1]]}}</b> which are the <b>least dominant segment</b> with {{top_target_shares[worst_top_share[0]] | round(1)}}%
   of their total observations from each of the categories.
 {% endif %}
 {% if best_top_share | length ==1 %}
@@ -74,7 +74,7 @@ When it comes to <b>{{target}} - {{top_target}},
 {% elif best_top_share | length == 2 %}
   But,<b> segment {{levels[best_top_share[0]]}} and segment {{levels[best_top_share[1]]}}</b> have the
 {% elif best_top_share | length > 2 %}
-  But, there are <b>{{best_top_share|length}} categories</b>(including segment {{levels[best_top_share[0]]}} and segment {{levels[best_top_share[1]]}}) have the
+  But, there are <b>{{best_top_share|length}} categories</b>(including <b>segment {{levels[best_top_share[0]]}} and segment {{levels[best_top_share[1]]}}</b>) have the
 {% endif %}
 <b>highest contribution of {{target}} - {{top_target}}</b> ({{top_target_shares[best_top_share[0]] | round(1)}}%).
 

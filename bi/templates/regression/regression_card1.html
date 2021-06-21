@@ -29,8 +29,8 @@
   As {{measure_column}} changes, {{result_column}} tend to move in the opposite direction.
 {% endif %}
 {% if coefficient > 0 %}
-  An incremental unit change in {{measure_column}} corresponds to an average increase in {{result_column}} by {{coefficient}} units.
+  An unit change in {{measure_column}} corresponds to an average change in {{result_column}} by {{coefficient}} units considering the other independent variables.
 {% elif coefficient < 0%}
-  An incremental unit change in {{measure_column}} corresponds to an average decrease in {{result_column}} by {{coefficient}} units.
+  An unit change in {{measure_column}} corresponds to an average change in {{result_column}} by {{coefficient}} units considering the other independent variables.
 {% endif %}
 </p>

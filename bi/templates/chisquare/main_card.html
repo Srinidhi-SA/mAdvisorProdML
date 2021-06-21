@@ -7,7 +7,7 @@
     <b>significant association</b> with {{target}}.
   {% elif num_variables != num_significant_variables %}
     There are <b>{{num_variables}} factors</b> in the dataset and <b> {{num_significant_variables}} of them
-    </b> (including {{significant_variables[0]}}, {{significant_variables[1]}}) have <b>significant association</b>
+    </b> (including {{significant_variables}}) have <b>significant association</b>
     with {{target}}.
   {% elif num_variables == num_significant_variables %}
     There are <b>{{num_variables}} factors</b> in the dataset and <b> all of them </b>  have <b>significant
@@ -28,7 +28,7 @@
 {% elif num_significant_variables>1 %}
   It implies that specific categories within each of the dimensions show <b>considerable amount of variation </b>
   in distribution of {{target}} categories.
-  The chart below displays the<b> impact of key dimensions </b> on {{target}}, as measured by effect size.
+  The chart below displays the<b> impact of key variables </b> on {{target}}, as measured by effect size.
 {% endif %}
 {% if num_significant_variables >= 1%}
   Let us take a deeper look at some of the most important relationships.

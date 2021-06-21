@@ -111,11 +111,11 @@ class MeasureColumnNarrative(object):
         lines += NarrativesUtils.block_splitter(self._analysis1,self._blockSplitter)
         lines += [C3ChartData(self._get_c3_histogram())]
         self._tableData = [['Minimum','Quartile 1','Median','Quartile 3','Maximum'],
-                            [NarrativesUtils.round_number(self._measure_descr_stats.get_min()),
-                             NarrativesUtils.round_number(self._five_point_summary_stats.get_q1_split()),
-                             NarrativesUtils.round_number(self._five_point_summary_stats.get_q2_split()),
-                             NarrativesUtils.round_number(self._five_point_summary_stats.get_q3_split()),
-                             NarrativesUtils.round_number(self._measure_descr_stats.get_max())]]
+                            [NarrativesUtils.round_number(self._measure_descr_stats.get_min(),2,False),
+                             NarrativesUtils.round_number(self._five_point_summary_stats.get_q1_split(),2,False),
+                             NarrativesUtils.round_number(self._five_point_summary_stats.get_q2_split(),2,False),
+                             NarrativesUtils.round_number(self._five_point_summary_stats.get_q3_split(),2,False),
+                             NarrativesUtils.round_number(self._measure_descr_stats.get_max(),2,False)]]
         lines += [TableData({'tableType':'normal','tableData':self._tableData})]
         lines += NarrativesUtils.block_splitter(self._analysis2,self._blockSplitter)
         if self.card2 != '':

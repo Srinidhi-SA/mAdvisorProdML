@@ -21,7 +21,7 @@ from pyspark.sql.types import *
 from pyspark.sql.types import StringType,DoubleType,FloatType
 from pyspark.sql.types import IntegerType
 from sklearn.model_selection import train_test_split
-
+import pyspark.sql.functions as F
 from bi.common import ContextSetter
 from bi.common import utils as CommonUtils
 from bi.common import MetaParser
@@ -267,12 +267,17 @@ class DataFrameHelper(object):
         """
         remove rows where the given column has null values
         """
-        if self._pandas_flag:
-            self._data_frame.dropna(axis=0, subset=[column_name], inplace=True)
-            self.num_rows = len(self._data_frame)
-        else:
-            self._data_frame = self._data_frame.na.drop(subset=[column_name])
-            self.num_rows = self._data_frame.count()
+        try:
+            if self._pandas_flag:
+                self._data_frame.dropna(axis=0, subset=[column_name], inplace=True)
+                self.num_rows = len(self._data_frame)
+            else:
+                self._data_frame = self._data_frame.na.drop(subset=[column_name])
+                self.num_rows = self._data_frame.count()
+        except Exception as e:
+            if column_name in str(e):
+                raise ValueError("Job failed due to Target Column")
+            raise ValueError(e)
 
     def bin_columns(self,colsToBin):
         for bincol in colsToBin:
@@ -332,6 +337,7 @@ class DataFrameHelper(object):
             return list(self._data_frame[column_name].unique())
         else:
             return [levels[0] for levels in self._data_frame.select(column_name).distinct().collect()]
+    # return df.agg((F.collect_set(column_name).alias(column_name))).first().asDict()[column_name]
 
     def get_num_unique_values(self,column_name):
         if self._pandas_flag:

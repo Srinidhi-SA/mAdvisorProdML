@@ -25,7 +25,10 @@ try:
 except:
     import pickle
 
-from sklearn.externals import joblib
+try:
+    from sklearn.externals import joblib
+except:
+    import joblib
 from sklearn import metrics
 from sklearn2pmml import sklearn2pmml
 from sklearn2pmml import PMMLPipeline
@@ -136,7 +139,7 @@ class NNPTRegressionScript(object):
             x_train = MLUtils.create_dummy_columns(x_train,[x for x in categorical_columns if x != result_column])
             x_test = MLUtils.create_dummy_columns(x_test,[x for x in categorical_columns if x != result_column])
             x_test = MLUtils.fill_missing_columns(x_test,x_train.columns,result_column)
-
+            levels = df[result_column].unique()
             print("="*150)
             print("X-Train Shape - ", x_train.shape)
             print("Y-Train Shape - ", y_train.shape)
@@ -162,7 +165,10 @@ class NNPTRegressionScript(object):
             trainset = torch_data_utils.TensorDataset(x_train_tensored, y_train_tensored)
             testset = torch_data_utils.TensorDataset(x_test_tensored, y_test_tensored)
 
-            nnptr_params = algoSetting.get_nnptr_params_dict()[0]
+            if self._dataframe_context.get_trainerMode() == "autoML":
+                nnptr_params = PYTORCHUTILS.get_nnptr_params_dict(levels,x_train.shape[1],x_train.shape[0])
+            else:
+                nnptr_params = algoSetting.get_nnptr_params_dict()[0]
             layers_for_network = PYTORCHUTILS.get_layers_for_network_module(nnptr_params, task_type = "REGRESSION",first_layer_units = x_train.shape[1])
 
             # Use GPU if available
@@ -180,11 +186,13 @@ class NNPTRegressionScript(object):
             print("NEURAL-NETWORK - ", network)
             print("~"*50)
 
+            loss_name = other_params_dict["loss_name"]
             criterion = other_params_dict["loss_criterion"]
             n_epochs = other_params_dict["number_of_epochs"]
             batch_size = other_params_dict["batch_size"]
-            optimizer = other_params_dict["optimizer"]
-
+            optimizer_dict = other_params_dict["optimizer"]
+            optimizer_name = optimizer_dict["optimizer"]
+            optimizer = PYTORCHUTILS.get_optimizer(optimizer_name, optimizer_dict, network.parameters())
             dataloader_params = {
             "batch_size": batch_size,
             "shuffle": True
@@ -213,7 +221,11 @@ class NNPTRegressionScript(object):
 
                     # Forward + backward + optimize
                     outputs = network(inputs.float())
-                    loss = criterion(outputs, labels.float())
+                    if loss_name != "CrossEntropyLoss":
+                        outputs = torch.max(outputs,1).values
+                        loss = criterion(outputs, labels.float())
+                    else:
+                        loss = criterion(outputs, labels.long())
                     loss.backward()
                     optimizer.step()
 

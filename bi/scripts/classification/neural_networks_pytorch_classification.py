@@ -9,7 +9,7 @@ from builtins import object
 from past.utils import old_div
 import json
 import time
-
+import re
 import humanize
 import numpy as np
 import pandas as pd
@@ -26,7 +26,10 @@ try:
 except:
     import pickle
 
-from sklearn.externals import joblib
+try:
+    from sklearn.externals import joblib
+except:
+    import joblib
 from sklearn import metrics
 from sklearn2pmml import sklearn2pmml
 from sklearn2pmml import PMMLPipeline
@@ -62,6 +65,7 @@ class NNPTClassificationScript(object):
         self._data_frame = data_frame
         self._dataframe_helper = df_helper
         self._dataframe_context = df_context
+        self._actual_df = df_context.get_actual_df()
         self._pandas_flag = df_context._pandas_flag
         self._spark = spark
         self._model_summary = {"confusion_matrix":{},"precision_recall_stats":{}}
@@ -71,7 +75,13 @@ class NNPTClassificationScript(object):
         self._slug = self._model_slug_map["Neural Network (PyTorch)"]
         self._targetLevel = self._dataframe_context.get_target_level_for_model()
         self._datasetName = CommonUtils.get_dataset_name(self._dataframe_context.CSV_FILE)
-
+        try:
+            if not self._pandas_flag:
+                self._data_frame = self._data_frame.toPandas()
+                self._data_frame.columns = [re.sub("[[]|[]]|[<]","", col) for col in self._data_frame.columns.values]
+                self._dataframe_helper.set_train_test_data(self._data_frame)
+        except:
+            pass
         self._completionStatus = self._dataframe_context.get_completion_status()
         print(self._completionStatus,"initial completion status")
         self._analysisName = self._slug
@@ -761,7 +771,11 @@ class NNPTClassificationScript(object):
             if result_column in df.columns:
                 df.drop(result_column, axis=1, inplace=True)
             df = df.rename(index=str, columns={"predicted_class": result_column})
-            df.to_csv(score_data_path,header=True,index=False)
+            df = df.round({'predicted_probability':2})
+            df_new = self._actual_df.copy(deep=True)
+            df_new['predicted_class'] = list(df[result_column])
+            df_new['predicted_probability'] = list(df['predicted_probability'])
+            df_new.to_csv(score_data_path,header=True,index=False)
             uidCol = self._dataframe_context.get_uid_column()
             if uidCol == None:
                 uidCols = self._metaParser.get_suggested_uid_columns()
@@ -817,6 +831,8 @@ class NNPTClassificationScript(object):
                 columns_to_drop = list(set(df.columns)-set(columns_to_keep))
             else:
                 columns_to_drop += ["predicted_probability"]
+            if set(columns_to_drop) == set(df.columns):
+                columns_to_drop = ["predicted_probability"]
             columns_to_drop = [x for x in columns_to_drop if x in df.columns and x != result_column]
             df.drop(columns_to_drop, axis=1, inplace=True)
             # # Dropping predicted_probability column

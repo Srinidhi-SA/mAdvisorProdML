@@ -137,6 +137,7 @@ class MetaDataHelper(object):
                 measure_chart_data = sorted(measure_chart_data,key=lambda x:x["value"],reverse=True)
                 measure_chart_obj = ChartJson(NormalChartData(measure_chart_data).get_data(),chart_type="bar")
                 measure_chart_obj.set_axes({"x":"name","y":"value"})
+                measure_chart_obj.yAxisNumberFormat = '.2f'
                 measure_chart_obj.set_subchart(False)
                 measure_chart_obj.set_hide_xtick(True)
                 measure_chart_obj.set_show_legend(False)
@@ -257,7 +258,10 @@ class MetaDataHelper(object):
                 summary_df.drop(index=["25%", "50%", "75%"], inplace=True)
                 summary_df.rename(index={'std': 'stddev'}, inplace=True)
                 summary_df=summary_df.reset_index()
-                summary_df.rename(columns={'index': 'summary'}, inplace=True)
+                if 'level_0' in list(summary_df.columns):
+                    summary_df.rename(columns={'level_0': 'summary'}, inplace=True)
+                else:
+                    summary_df.rename(columns={'index': 'summary'}, inplace=True)
             else:
                 summary_df = None
         else:
@@ -366,6 +370,7 @@ class MetaDataHelper(object):
                 dimension_chart_data = [{"name":str(k),"value":v} if k != None else {"name":"null","value":v} for k,v in list(levelCount.items())]
                 dimension_chart_data = sorted(dimension_chart_data,key=lambda x:x["value"],reverse=True)
                 dimension_chart_obj = ChartJson(NormalChartData(dimension_chart_data).get_data(),chart_type="bar")
+                dimension_chart_obj.yAxisNumberFormat = '.2f'
                 dimension_chart_obj.set_axes({"x":"name","y":"value"})
                 dimension_chart_obj.set_subchart(False)
                 dimension_chart_obj.set_hide_xtick(True)
@@ -910,10 +915,10 @@ class MetaDataHelper(object):
                 if (colStat["Duplicate"] != None):
                     ignore = True
                     reason = "Column is a duplicate of "+str(colStat["Duplicate"])
-            if (colStat["numberOfNulls"] == 0):
-                if (colStat["numberOfUniqueValues"] == total_rows):
-                    ignore = True
-                    reason = "Index Column (all values are distinct)"
+            #if (colStat["numberOfNulls"] == 0):
+            #    if (colStat["numberOfUniqueValues"] == total_rows):
+            #        ignore = True
+            #        reason = "Index Column (all values are distinct)"
             else:
                 if (colStat["numberOfNulls"] > colStat["numberOfNotNulls"]):
                     ignore = True

@@ -10,14 +10,11 @@ from past.utils import old_div
 import json
 import time
 import re
+from scipy.stats import randint,uniform
 import humanize
 import numpy as np
 import pandas as pd
 from datetime import datetime
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-from tensorflow.keras.models import load_model
 
 try:
     import pickle as pickle
@@ -31,7 +28,8 @@ except:
 from sklearn import metrics
 from sklearn2pmml import sklearn2pmml
 from sklearn2pmml import PMMLPipeline
-from sklearn.neural_network import MLPClassifier
+import lightgbm as lgb
+from lightgbm import LGBMClassifier
 from sklearn import preprocessing
 from sklearn.model_selection import KFold
 from sklearn.model_selection import GridSearchCV
@@ -39,15 +37,13 @@ from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import roc_curve, auc, roc_auc_score
 from sklearn.model_selection import ParameterGrid
 
-
 from pyspark.sql import SQLContext
 from bi.common import utils as CommonUtils
 from bi.narratives import utils as NarrativesUtils
 from bi.common import MLModelSummary,NormalCard,KpiData,C3ChartData,HtmlData,SklearnGridSearchResult,SkleanrKFoldResult
-from bi.algorithms import LogisticRegression
 from bi.algorithms import utils as MLUtils
 from bi.common import DataFrameHelper
-from bi.common import C3ChartData,TableData, NormalCard
+from bi.common import NormalCard, C3ChartData,TableData
 from bi.common import NormalChartData,ChartJson
 from bi.algorithms import DecisionTrees
 from bi.narratives.decisiontree.decision_tree import DecisionTreeNarrative
@@ -55,8 +51,7 @@ from bi.common import NarrativesTree
 from bi.settings import setting as GLOBALSETTINGS
 from bi.algorithms import GainLiftKS
 
-
-class TensorFlowScript(object):
+class LgbmScript(object):
     def __init__(self, data_frame, df_helper,df_context, spark, prediction_narrative, result_setter,meta_parser,mlEnvironment="sklearn"):
         self._metaParser = meta_parser
         self._prediction_narrative = prediction_narrative
@@ -64,41 +59,36 @@ class TensorFlowScript(object):
         self._data_frame = data_frame
         self._dataframe_helper = df_helper
         self._dataframe_context = df_context
-        self._pandas_flag = df_context._pandas_flag
         self._actual_df = df_context.get_actual_df()
         self._spark = spark
-        self._model_summary = {"confusion_matrix":{},"precision_recall_stats":{}}
+        self._model_summary = MLModelSummary()
         self._score_summary = {}
-        self._column_separator = "|~|"
-        self._model_slug_map = GLOBALSETTINGS.MODEL_SLUG_MAPPING
-        self._slug = self._model_slug_map["Neural Network (TensorFlow)"]
+        self._pandas_flag = df_context._pandas_flag
+        #self._model_slug_map = GLOBALSETTINGS.MODEL_SLUG_MAPPING
+        self._slug = GLOBALSETTINGS.MODEL_SLUG_MAPPING["LightGBM"]
         self._targetLevel = self._dataframe_context.get_target_level_for_model()
         self._datasetName = CommonUtils.get_dataset_name(self._dataframe_context.CSV_FILE)
-        try:
-            if not self._pandas_flag:
-                self._data_frame = self._data_frame.toPandas()
-                self._data_frame.columns = [re.sub("[[]|[]]|[<]","", col) for col in self._data_frame.columns.values]
-                self._dataframe_helper.set_train_test_data(self._data_frame)
-        except:
-            pass
+
         self._completionStatus = self._dataframe_context.get_completion_status()
         print(self._completionStatus,"initial completion status")
         self._analysisName = self._slug
         self._messageURL = self._dataframe_context.get_message_url()
         self._scriptWeightDict = self._dataframe_context.get_ml_model_training_weight()
         self._mlEnv = mlEnvironment
+        self._model=None
+        self._threshold = False
 
         self._scriptStages = {
             "initialization":{
-                "summary":"Initialized The Neural Network (TensorFlow) Scripts",
+                "summary":"Initialized The Lgbm Scripts",
                 "weight":1
                 },
             "training":{
-                "summary":"Neural Network (TensorFlow) Model Training Started",
+                "summary":"Lgbm Model Training Started",
                 "weight":2
                 },
             "completion":{
-                "summary":"Neural Network (TensorFlow) Model Training Finished",
+                "summary":"Lgbm Model Training Finished",
                 "weight":1
                 },
             }
@@ -140,11 +130,17 @@ class TensorFlowScript(object):
             x_train = MLUtils.create_dummy_columns(x_train,[x for x in categorical_columns if x != result_column])
             x_test = MLUtils.create_dummy_columns(x_test,[x for x in categorical_columns if x != result_column])
             x_test = MLUtils.fill_missing_columns(x_test,x_train.columns,result_column)
+            x_train.columns = [re.sub("[[]|[]]|[<]","", col) for col in x_train.columns.values]
+            x_test.columns = [re.sub("[[]|[]]|[<]","", col) for col in x_test.columns.values]
+
 
             CommonUtils.create_update_and_save_progress_message(self._dataframe_context,self._scriptWeightDict,self._scriptStages,self._slug,"training","info",display=True,emptyBin=False,customMsg=None,weightKey="total")
 
             st = time.time()
             levels = df[result_column].unique()
+            clf = lgb.LGBMClassifier(boosting_type='dart',learning_rate=0.1, n_estimators=50,
+                                     reg_lambda=0.2,verbose = -1,random_state =42,n_jobs=1, n_iter_no_change=1)
+
 
             labelEncoder = preprocessing.LabelEncoder()
             labelEncoder.fit(np.concatenate([y_train,y_test]))
@@ -169,220 +165,210 @@ class TensorFlowScript(object):
             print("TARGET LEVEL - ", self._targetLevel)
             print("APP TYPE - ", appType)
             print("="*150)
-            evaluationMetricDict = {"name":GLOBALSETTINGS.CLASSIFICATION_MODEL_EVALUATION_METRIC}
-            evaluationMetricDict["displayName"] = GLOBALSETTINGS.SKLEARN_EVAL_METRIC_NAME_DISPLAY_MAP[evaluationMetricDict["name"]]
-            self._result_setter.set_hyper_parameter_results(self._slug,None)
-
             if self._dataframe_context.get_trainerMode() == "autoML":
-                # automl_enable = True
-                train_size = x_train.shape[0]
-                if train_size < 10000:
-                    units = '32'
-                    if len(levels) > 2 and train_size >= 500:
-                        units = '64'
-                    rate = '0.1'
-                elif train_size >= 10000 and train_size < 20000:
-                    units = '32'
-                    if len(levels) > 2:
-                        units = '64'
-                    rate = '0.2'
-                elif train_size >= 20000 and train_size < 40000:
-                    units = '64'
-                    if len(levels) > 2:
-                        units = '128'
-                    rate = '0.3'
-                elif train_size >= 60000:
-                    units = '128'
-                    if len(levels) > 2:
-                        units = '256'
-                    rate = '0.5'
-                else:
-                    rate = '0.5'
-                    units = '256'
-                params_tf = {
-                              'hidden_layer_info':
-                              {
-                                '1': {
-                                  'layerId': 2,
-                                  'rate': rate,
-                                  'layer': 'Dropout'
-                                },
-                                '3': {
-                                  'layerId': 4,
-                                  'rate': rate,
-                                  'layer': 'Dropout'
-                                },
-                                '4': {
-                                  'bias_constraint': None,
-                                  'units': str(len(levels)),
-                                  'use_bias': True,
-                                  'layer': 'Dense',
-                                  'bias_initializer': 'glorot_uniform',
-                                  'layerId': 5,
-                                  'activity_regularizer': None,
-                                  'kernel_constraint': None,
-                                  'activation': 'softmax',
-                                  'kernel_initializer': 'glorot_uniform',
-                                  'kernel_regularizer': None,
-                                  'batch_normalization': 'True',
-                                  'bias_regularizer': None
-                                },
-                                '0': {
-                                  'bias_constraint': None,
-                                  'units': units,
-                                  'use_bias': True,
-                                  'layer': 'Dense',
-                                  'bias_initializer': 'glorot_uniform',
-                                  'layerId': 1,
-                                  'activity_regularizer': None,
-                                  'kernel_constraint': None,
-                                  'activation': 'relu',
-                                  'kernel_initializer': 'glorot_uniform',
-                                  'kernel_regularizer': None,
-                                  'batch_normalization': 'True',
-                                  'bias_regularizer': None
-                                },
-                                '2': {
-                                  'bias_constraint': None,
-                                  'units': int(int(units)/2),
-                                  'use_bias': True,
-                                  'layer': 'Dense',
-                                  'bias_initializer': 'glorot_uniform',
-                                  'layerId': 3,
-                                  'activity_regularizer': None,
-                                  'kernel_constraint': None,
-                                  'activation': 'relu',
-                                  'kernel_initializer': 'glorot_uniform',
-                                  'kernel_regularizer': None,
-                                  'batch_normalization': 'True',
-                                  'bias_regularizer': None
-                                }
-                              }
-                            }
-                algoParams = {
-                                  'layer': 'Dense',
-                                  'loss': 'sparse_categorical_crossentropy',
-                                  'optimizer': 'Adam',
-                                  'batch_size': min(int(train_size/100), 300),
-                                  'number_of_epochs': 100,
-                                  'metrics': 'sparse_categorical_crossentropy'
-                                  }
-
-                if len(levels) == 2:
-                    params_tf['hidden_layer_info']['4']['activation'] = 'sigmoid'
-                    algoParams['loss'] = 'binary_crossentropy'
-                    algoParams['metrics'] = 'binary_crossentropy'
-                elif len(levels) > 2:
-                    pass
-
-                if train_size <= 500:
-                    algoParams['batch_size'] = int(train_size/10)
-                elif len(levels) == 2 and train_size > 500 and train_size < 2000:
-                    algoParams['batch_size'] = int(train_size/50)
-                elif len(levels) > 2 and train_size > 500 and train_size < 30000:
-                    batch_size = list(np.random.uniform(low = 100, high = 300, size = (29500,)))
-                    batch_size.sort()
-                    algoParams['batch_size'] = int(batch_size[train_size - 500])
+                automl_enable=True
             else:
-                params_tf = algoSetting.get_tf_params_dict()
+                automl_enable=False
+
+            if algoSetting.is_hyperparameter_tuning_enabled():
+                hyperParamInitParam = algoSetting.get_hyperparameter_params()
+                evaluationMetricDict = {"name":hyperParamInitParam["evaluationMetric"]}
+                evaluationMetricDict["displayName"] = GLOBALSETTINGS.SKLEARN_EVAL_METRIC_NAME_DISPLAY_MAP[evaluationMetricDict["name"]]
+                hyperParamAlgoName = algoSetting.get_hyperparameter_algo_name()
+                params_grid = algoSetting.get_params_dict_hyperparameter()
+                params_grid = {k:v for k,v in list(params_grid.items()) if k in clf.get_params()}
+                print(params_grid)
+                if hyperParamAlgoName == "gridsearchcv":
+                    clfGrid = GridSearchCV(clf,params_grid)
+                    gridParams = clfGrid.get_params()
+                    hyperParamInitParam = {k:v for k,v in list(hyperParamInitParam.items()) if k in gridParams}
+                    clfGrid.set_params(**hyperParamInitParam)
+                    modelmanagement_=clfGrid.get_params()
+                    # clfGrid.fit(x_train,y_train)
+                    grid_param={}
+                    grid_param['params']=ParameterGrid(params_grid)
+                    #bestEstimator = clfGrid.best_estimator_
+                    modelFilepath = "/".join(model_filepath.split("/")[:-1])
+                    sklearnHyperParameterResultObj = SklearnGridSearchResult(grid_param,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
+                    resultArray = sklearnHyperParameterResultObj.train_and_save_models()
+                    #print resultArray
+
+                    resultArrayDict = {
+                                        "Model_Id" : [],
+                                        "Algorithm_Name": [],
+                                        "Metric_Selected": [],
+                                        "Accuracy": [],
+                                        "Precision": [],
+                                        "Recall": [],
+                                        "ROC_AUC": [],
+                                        "Run_Time": []
+                                        }
+                    for val in resultArray:
+                        resultArrayDict["Model_Id"].append(val["Model Id"])
+                        resultArrayDict["Algorithm_Name"].append(val["algorithmName"])
+                        resultArrayDict["Metric_Selected"].append(val["comparisonMetricUsed"])
+                        resultArrayDict["Accuracy"].append(val["Accuracy"])
+                        resultArrayDict["Precision"].append(val["Precision"])
+                        resultArrayDict["Recall"].append(val["Recall"])
+                        resultArrayDict["ROC_AUC"].append(val["ROC-AUC"])
+                        resultArrayDict["Run_Time"].append(val["Run Time(Secs)"])
+                        comparison_metric_used = val["comparisonMetricUsed"]
+
+                    resultArraydf = pd.DataFrame.from_dict(resultArrayDict)
+
+                    if comparison_metric_used == "Accuracy":
+                        resultArraydf = resultArraydf.sort_values(by = ['Accuracy'], ascending = False)
+                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                    elif comparison_metric_used == "Recall":
+                        resultArraydf = resultArraydf.sort_values(by = ['Recall'], ascending = False)
+                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                    elif comparison_metric_used == "Precision":
+                        resultArraydf = resultArraydf.sort_values(by = ['Precision'], ascending = False)
+                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                    elif comparison_metric_used == "ROC-AUC":
+                        resultArraydf = resultArraydf.sort_values(by = ['ROC_AUC'], ascending = False)
+                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+
+                    print("BEST MODEL BY CHOSEN METRIC - ", best_model_by_metric_chosen)
+                    print(resultArraydf.head(20))
+                    hyper_st = time.time()
+                    bestEstimator = sklearnHyperParameterResultObj.getBestModel()
+                    bestParams = sklearnHyperParameterResultObj.getBestParam()
+                    bestEstimator = bestEstimator.set_params(**bestParams)
+                    bestEstimator.fit(x_train,y_train)
+                    bestEstimator.feature_names = list(x_train.columns.values)
+
+                    self._result_setter.set_hyper_parameter_results(self._slug,resultArray)
+                    self._result_setter.set_metadata_parallel_coordinates(self._slug,{"ignoreList":sklearnHyperParameterResultObj.get_ignore_list(),"hideColumns":sklearnHyperParameterResultObj.get_hide_columns(),"metricColName":sklearnHyperParameterResultObj.get_comparison_metric_colname(),"columnOrder":sklearnHyperParameterResultObj.get_keep_columns()})
+                elif hyperParamAlgoName == "randomsearchcv":
+                    hyper_st = time.time()
+                    clfRand = RandomizedSearchCV(clf,params_grid)
+                    clfRand.set_params(**hyperParamInitParam)
+                    modelmanagement_=clfRand.get_params()
+                    bestEstimator = None
+            else:
+                evaluationMetricDict =algoSetting.get_evaluvation_metric(Type="CLASSIFICATION")
+                evaluationMetricDict["displayName"] = GLOBALSETTINGS.SKLEARN_EVAL_METRIC_NAME_DISPLAY_MAP[evaluationMetricDict["name"]]
+                self._result_setter.set_hyper_parameter_results(self._slug,None)
                 algoParams = algoSetting.get_params_dict()
-                algoParams = {k:v for k,v in list(algoParams.items())}
-
-            print('\n\nparams_tf:\n\n', params_tf)
-            print('\n\nalgoParams:\n\n', algoParams)
-            print('\n\n')
-            model = tf.keras.models.Sequential()
-
-            first_layer_flag=True
-            for i in range(len(list(params_tf['hidden_layer_info'].keys()))):
-                if params_tf['hidden_layer_info'][str(i)]["layer"]=="Dense":
-
-                    if first_layer_flag:
-
-                        model.add(tf.keras.layers.Dense(params_tf['hidden_layer_info'][str(i)]["units"],
-                        activation=params_tf['hidden_layer_info'][str(i)]["activation"],
-                        input_shape=(len(x_train.columns),),
-                        use_bias=params_tf['hidden_layer_info'][str(i)]["use_bias"],
-                        kernel_initializer=params_tf['hidden_layer_info'][str(i)]["kernel_initializer"],
-                        bias_initializer=params_tf['hidden_layer_info'][str(i)]["bias_initializer"],
-                        kernel_regularizer=params_tf['hidden_layer_info'][str(i)]["kernel_regularizer"],
-                        bias_regularizer=params_tf['hidden_layer_info'][str(i)]["bias_regularizer"],
-                        activity_regularizer=params_tf['hidden_layer_info'][str(i)]["activity_regularizer"],
-                        kernel_constraint=params_tf['hidden_layer_info'][str(i)]["kernel_constraint"],
-                        bias_constraint=params_tf['hidden_layer_info'][str(i)]["bias_constraint"]))
-                        try:
-                            if params_tf['hidden_layer_info'][str(i)]["batch_normalization"]=="True":
-                                model.add(tf.keras.layers.BatchNormalization())
-                        except:
-                            print("BATCH_NORM_FAILED ##########################")
-                            pass
-                        first_layer_flag=False
+                if len(levels) <= 2:
+                    class_weight = None
+                    pos_ratio = min(y_train.value_counts()) / max(y_train.value_counts())
+                    if pos_ratio < 0.49:
+                        scale_pos_weight = 1
                     else:
-                        model.add(tf.keras.layers.Dense(params_tf['hidden_layer_info'][str(i)]["units"],
-                        activation=params_tf['hidden_layer_info'][str(i)]["activation"],
-                        use_bias=params_tf['hidden_layer_info'][str(i)]["use_bias"],
-                        kernel_initializer=params_tf['hidden_layer_info'][str(i)]["kernel_initializer"],
-                        bias_initializer=params_tf['hidden_layer_info'][str(i)]["bias_initializer"],
-                        kernel_regularizer=params_tf['hidden_layer_info'][str(i)]["kernel_regularizer"],
-                        bias_regularizer=params_tf['hidden_layer_info'][str(i)]["bias_regularizer"],
-                        activity_regularizer=params_tf['hidden_layer_info'][str(i)]["activity_regularizer"],
-                        kernel_constraint=params_tf['hidden_layer_info'][str(i)]["kernel_constraint"],
-                        bias_constraint=params_tf['hidden_layer_info'][str(i)]["bias_constraint"]))
-                        try:
-                            if params_tf['hidden_layer_info'][str(i)]["batch_normalization"]=="True":
-                                model.add(tf.keras.layers.BatchNormalization())
-                        except:
-                            print("BATCH_NORM_FAILED ##########################")
-                            pass
+                        scale_pos_weight = 1
+                else:
+                    scale_pos_weight = 1
+                    class_weight = 'balanced'
+                if automl_enable:
+                    if len(x_train) < 1000:
+                        params_grid = {
+                            #'max_depth': randint(4, 7),
+                            #'num_leaves': randint(1, 39),
+                            'min_child_samples': randint(20, 120),
+                            #'min_child_weight': [ 1e-2,1,1e2],
+                            #'subsample': uniform(loc=0.2, scale=0.8),
+                            #'colsample_bytree': uniform(loc=0.4, scale=0.6),
+                            #'reg_alpha': [0, 1,100],
+                            'learning_rate': [0.01,0.05],
+                            'scale_pos_weight': [scale_pos_weight],
+                            'class_weight': [class_weight]
+                        }
+                    elif len(x_train) < 10000:
+                        params_grid = {
+                            #'max_depth': [5, 7, 10],
+                            #'num_leaves': randint(20, 80),
+                            'min_child_samples': randint(100, 500),
+                            #'min_child_weight': [1e-2, 1,1e2],
+                            #'subsample': uniform(loc=0.2, scale=0.8),
+                            #'colsample_bytree': uniform(loc=0.4, scale=0.6),
+                            #'reg_alpha': [0,1,100],
+                            'learning_rate': [0.01, 0.03],
+                            'scale_pos_weight': [scale_pos_weight],
+                            'class_weight': [class_weight]
+                        }
+                    else:
+                        params_grid = {
+                            #'max_depth': [-1, 7, 10, 20],
+                            #'num_leaves': randint(40, 300),
+                            'min_child_samples': randint(200, 700),
+                            #'min_child_weight': [1e-1, 1, 1e1],
+                            #'subsample': uniform(loc=0.2, scale=0.8),
+                            #'colsample_bytree': uniform(loc=0.4, scale=0.6),
+                            #'reg_alpha': [0,1,100],
+                            'learning_rate': [0.01, 0.03],
+                            'scale_pos_weight': [scale_pos_weight]
+                        }
 
-                elif params_tf['hidden_layer_info'][str(i)]["layer"]=="Dropout":
-                    model.add(tf.keras.layers.Dropout(float(params_tf['hidden_layer_info'][str(i)]["rate"])))
 
-                elif params_tf['hidden_layer_info'][str(i)]["layer"]=="Lambda":
-                    if params_tf['hidden_layer_info'][str(i)]["lambda"]=="Addition":
-                        model.add(tf.keras.layers.Lambda(lambda x:x+int(params_tf['hidden_layer_info'][str(i)]["units"])))
-                    if params_tf['hidden_layer_info'][str(i)]["lambda"]=="Multiplication":
-                        model.add(tf.keras.layers.Lambda(lambda x:x*int(params_tf['hidden_layer_info'][str(i)]["units"])))
-                    if params_tf['hidden_layer_info'][str(i)]["lambda"]=="Subtraction":
-                        model.add(tf.keras.layers.Lambda(lambda x:x-int(params_tf['hidden_layer_info'][str(i)]["units"])))
-                    if params_tf['hidden_layer_info'][str(i)]["lambda"]=="Division":
-                        model.add(tf.keras.layers.Lambda(lambda x:old_div(x,int(params_tf['hidden_layer_info'][str(i)]["units"]))))
+                    #              'min_child_samples': randint(100, 500),
+                    #              'min_child_weight': [1e-5, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4],
+                    #              'subsample': uniform(loc=0.2, scale=0.8),
+                    #              'colsample_bytree': uniform(loc=0.4, scale=0.6),
+                    #              'reg_alpha': [0, 1e-1, 1, 2, 5, 7, 10, 50, 100],
+                    #              'reg_lambda': [0, 1e-1, 1, 5, 10, 20, 50, 100],
+                    #              'boosting_type':['gbdt','dart','goss','rf'],
+                    #              'learning_rate':[0.1,0.5,1.0],
+                    #              'n_estimators':[100,200,400,500],
+                    #              'max_depth':[7,10,12],
+                    #              'bagging_freq':[1],
+                    #              'bagging_fraction' :[0.2,0.4,0.6,0.8,1.0]
 
-            #model.compile(optimizer=algoParams["optimizer"],loss = algoParams["loss"], metrics=[algoParams['metrics']])
+                    hyperParamInitParam={'evaluationMetric': 'roc_auc', 'kFold': 2}
+                    clfRand = RandomizedSearchCV(clf,params_grid)
+                    gridParams = clfRand.get_params()
+                    hyperParamInitParam = {k:v for k,v in list(hyperParamInitParam.items()) if k in gridParams }
+                    clfRand.set_params(**hyperParamInitParam)
+                    modelmanagement_=clfRand.get_params()
+                    numFold=2
+                    kFoldClass = SkleanrKFoldResult(numFold,clfRand,x_train,x_test,y_train,y_test,appType,levels,posLabel,evaluationMetricDict=evaluationMetricDict)
+                    kFoldClass.train_and_save_result()
+                    kFoldOutput = kFoldClass.get_kfold_result()
+                    bestEstimator = kFoldClass.get_best_estimator()
+                    y_test = kFoldClass.get_ytest()[0]
+                    y_score = kFoldClass.get_yscore()[0]
+                    y_prob = kFoldClass.get_yprob()[0]
+                    self._threshold = kFoldClass.get_threshold()[0]
+                    bestEstimator.fit(x_train, y_train)
+                    print("Lgbm AuTO ML Random CV#######################3")
+                else:
+                    algoParams = {k:v for k,v in list(algoParams.items()) if k in list(clf.get_params().keys())}
+                    clf.set_params(**algoParams)
+                    modelmanagement_=clf.get_params()
+                    print("!"*50)
+                    print(clf.get_params())
+                    print("!"*50)
+                    if validationDict["name"] == "kFold":
+                        defaultSplit = GLOBALSETTINGS.DEFAULT_VALIDATION_OBJECT["value"]
+                        numFold = int(validationDict["value"])
+                        if numFold == 0:
+                            numFold = 3
+                        kFoldClass = SkleanrKFoldResult(numFold,clf,x_train,x_test,y_train,y_test,appType,levels,posLabel,evaluationMetricDict=evaluationMetricDict)
+                        kFoldClass.train_and_save_result()
+                        kFoldOutput = kFoldClass.get_kfold_result()
+                        bestEstimator = kFoldClass.get_best_estimator()
+                    elif validationDict["name"] == "trainAndtest":
+                        clf.fit(x_train, y_train)
+                        clf.feature_names = list(x_train.columns.values)
+                        bestEstimator = clf
+
+            # clf.fit(x_train, y_train)
+            # bestEstimator = clf
             try:
-                if algoParams['optimizer'] == 'SGD':
-                    opt = keras.optimizers.SGD(learning_rate=algoParams['learning_rate'])
-                elif algoParams['optimizer'] == 'RMSprop':
-                    opt = tf.keras.optimizers.RMSprop(learning_rate=algoParams['learning_rate'])
-                elif algoParams['optimizer'] == 'Adagrad':
-                    opt = tf.keras.optimizers.Adagrad(learning_rate=algoParams['learning_rate'])
-                elif algoParams['optimizer'] == 'Adadelta':
-                    opt = tf.keras.optimizers.Adadelta(learning_rate=algoParams['learning_rate'])
-                elif algoParams['optimizer'] == 'Adam':
-                    opt = tf.keras.optimizers.Adam(learning_rate=algoParams['learning_rate'])
-                elif algoParams['optimizer'] == 'Adamax':
-                    opt = tf.keras.optimizers.Adamax(learning_rate=algoParams['learning_rate'])
-                elif algoParams['optimizer'] == 'Nadam':
-                    opt = tf.keras.optimizers.Nadam(learning_rate=algoParams['learning_rate'])
-                model.compile(optimizer=opt,loss = algoParams["loss"], metrics=[algoParams['metrics']])
+                self._model = bestEstimator.best_estimator_
             except:
-                model.compile(optimizer=algoParams["optimizer"],loss = algoParams["loss"], metrics=[algoParams['metrics']])
-
-            try:
-                model.fit(x_train,y_train,epochs=algoParams["number_of_epochs"],verbose=1,batch_size=algoParams["batch_size"])
-            except:
-                y_train=tf.keras.utils.to_categorical(y_train)
-                model.fit(x_train,y_train,epochs=algoParams["number_of_epochs"],verbose=1,batch_size=algoParams["batch_size"])
-
-
-            bestEstimator=model
+                self._model = bestEstimator
             trainingTime = time.time()-st
-            y_score = bestEstimator.predict_classes(x_test)
-            try:
-                y_prob = bestEstimator.predict(x_test)
-            except:
-                y_prob = [0]*len(y_score)
+            if not automl_enable:
+                y_score = np.round(bestEstimator.predict(x_test))
+                try:
+                    y_prob = bestEstimator.predict_proba(x_test)
+                except:
+                    y_prob = [0]*len(y_score)
 
+            # overall_precision_recall = MLUtils.calculate_overall_precision_recall(y_test,y_score,targetLevel = self._targetLevel)
+            # print overall_precision_recall
             accuracy = metrics.accuracy_score(y_test,y_score)
             if len(levels) <= 2:
                 precision = metrics.precision_score(y_test,y_score,pos_label=posLabel,average="binary")
@@ -395,11 +381,9 @@ class TensorFlowScript(object):
                 recall = metrics.recall_score(y_test,y_score,pos_label=posLabel,average="macro")
                 log_loss = metrics.log_loss(y_test,y_prob)
                 F1_score = metrics.f1_score(y_test,y_score,pos_label=posLabel,average="macro")
-                # auc = metrics.roc_auc_score(y_test,y_score,average="weighted")
+                #auc = metrics.roc_auc_score(y_test,y_score,average="weighted")
                 roc_auc = None
-            print((precision,recall,roc_auc,log_loss,F1_score))
-            #import sys
-            #sys.exit()
+
             y_prob_for_eval = []
             for i in range(len(y_prob)):
                 if len(y_prob[i]) == 1:
@@ -424,6 +408,7 @@ class TensorFlowScript(object):
                                     "y_prob" : y_prob,
                                     "positive_label" : posLabel
                                 }
+
                 roc_dataframe = pd.DataFrame(
                                                 {
                                                     "y_score" : y_score,
@@ -441,9 +426,7 @@ class TensorFlowScript(object):
                 tpr_optimal_index =  roc_df.loc[roc_df.index[optimal_index], "TPR"]
 
                 rounded_roc_df = roc_df.round({'FPR': 2, 'TPR': 4})
-
                 unique_fpr = rounded_roc_df["FPR"].unique()
-
                 final_roc_df = rounded_roc_df.groupby("FPR", as_index = False)[["TPR"]].mean()
                 endgame_roc_df = final_roc_df.round({'FPR' : 2, 'TPR' : 3})
 
@@ -489,25 +472,26 @@ class TensorFlowScript(object):
                 gain_lift_KS_dataframe = gain_lift_ks_obj.Rank_Ordering()
             else:
                 pys_df = self._spark.createDataFrame(temp_df)
-                gain_lift_ks_obj = GainLiftKS(pys_df, 'y_prob_for_eval', 'y_score', 'y_test', posLabel, self._spark)
-                gain_lift_KS_dataframe = gain_lift_ks_obj.Run().toPandas()
+                gain_lift_ks_obj = GainLiftKS(pys_df,'y_prob_for_eval','y_score','y_test',posLabel,self._spark)
+                gain_lift_KS_dataframe =  gain_lift_ks_obj.Run().toPandas()
 
             y_score = labelEncoder.inverse_transform(y_score)
             y_test = labelEncoder.inverse_transform(y_test)
 
-            feature_importance = {}
-
+            feature_importance={}
+            try:
+                feature_importance = dict(sorted(zip(x_train.columns,bestEstimator.feature_importances_),key=lambda x: x[1],reverse=True))
+            except:
+                pass
+            for k, v in feature_importance.items():
+                feature_importance[k] = CommonUtils.round_sig(v)
             objs = {"trained_model":bestEstimator,"actual":y_test,"predicted":y_score,"probability":y_prob,"feature_importance":feature_importance,"featureList":list(x_train.columns),"labelMapping":labelMapping}
+
             if not algoSetting.is_hyperparameter_tuning_enabled():
                 modelName = "M"+"0"*(GLOBALSETTINGS.MODEL_NAME_MAX_LENGTH-1)+"1"
-                print(model_filepath)
-
                 modelFilepathArr = model_filepath.split("/")[:-1]
-                modelFilepathArr.append(modelName+".h5")
-                print(modelFilepathArr,"/".join(modelFilepathArr))
-
-                #joblib.dump(objs["trained_model"],"/".join(modelFilepathArr))
-                objs["trained_model"].save("/".join(modelFilepathArr))
+                modelFilepathArr.append(modelName+".pkl")
+                joblib.dump(objs["trained_model"],"/".join(modelFilepathArr))
                 runtime = round((time.time() - st),2)
             else:
                 runtime = round((time.time() - hyper_st),2)
@@ -532,10 +516,10 @@ class TensorFlowScript(object):
                 pass
 
             cat_cols = list(set(categorical_columns) - {result_column})
-            overall_precision_recall = MLUtils.calculate_overall_precision_recall(objs["actual"],objs["predicted"],targetLevel=self._targetLevel)
+            overall_precision_recall = MLUtils.calculate_overall_precision_recall(objs["actual"],objs["predicted"],targetLevel = self._targetLevel)
             self._model_summary = MLModelSummary()
-            self._model_summary.set_algorithm_name("Neural Network (TensorFlow)")
-            self._model_summary.set_algorithm_display_name("Neural Network (TensorFlow)")
+            self._model_summary.set_algorithm_name("LightGBM")
+            self._model_summary.set_algorithm_display_name("LightGBM")
             self._model_summary.set_slug(self._slug)
             self._model_summary.set_training_time(runtime)
             self._model_summary.set_confusion_matrix(MLUtils.calculate_confusion_matrix(objs["actual"],objs["predicted"]))
@@ -557,15 +541,17 @@ class TensorFlowScript(object):
             # self._model_summary.set_model_features(list(set(x_train.columns)-set([result_column])))
             self._model_summary.set_model_features([col for col in x_train.columns if col != result_column])
             self._model_summary.set_level_counts(self._metaParser.get_unique_level_dict(list(set(categorical_columns))))
+            self._model_summary.set_num_trees(100)
+            self._model_summary.set_num_rules(300)
             self._model_summary.set_target_level(self._targetLevel)
-            # self._model_summary["trained_model_features"] = self._column_separator.join(list(x_train.columns)+[result_column])
             if not algoSetting.is_hyperparameter_tuning_enabled():
                 modelDropDownObj = {
                             "name":self._model_summary.get_algorithm_name(),
                             "evaluationMetricValue": locals()[evaluationMetricDict["name"]], # self._model_summary.get_model_accuracy(),
                             "evaluationMetricName": evaluationMetricDict["name"],
                             "slug":self._model_summary.get_slug(),
-                            "Model Id":modelName
+                            "Model Id":modelName,
+                            "threshold": str(self._threshold)
                             }
 
                 modelSummaryJson = {
@@ -594,104 +580,127 @@ class TensorFlowScript(object):
                 }
 
             self._model_management = MLModelSummary()
-            modelmanagement_=params_tf
-            modelmanagement_.update(algoParams)
-            if algoSetting.is_hyperparameter_tuning_enabled():
-                pass
-            else:
-                self._model_management.set_layer_info(data=modelmanagement_['hidden_layer_info'])
-                self._model_management.set_loss_function(data=modelmanagement_['loss'])
-                self._model_management.set_optimizer(data=modelmanagement_['optimizer'])
-                self._model_management.set_batch_size(data=modelmanagement_['batch_size'])
-                self._model_management.set_no_epochs(data=modelmanagement_['number_of_epochs'])
-                self._model_management.set_model_evaluation_metrics(data=modelmanagement_['metrics'])
+            if not algoSetting.is_hyperparameter_tuning_enabled() and not automl_enable:
+
+                self._model_management.set_booster_function(data=modelmanagement_['booster'])
+                self._model_management.set_learning_rate(data=modelmanagement_['learning_rate'])
+                self._model_management.set_minimum_loss_reduction(data=modelmanagement_['gamma'])
+                self._model_management.set_max_depth(data=modelmanagement_['max_depth'])
+                self._model_management.set_minimum_child_weight(data=modelmanagement_['min_child_weight'])
+                self._model_management.set_subsampling_ratio(data=modelmanagement_['subsample'])
+                self._model_management.set_subsample_for_each_tree(data=modelmanagement_['colsample_bytree'])
+                self._model_management.set_subsample_for_each_split(data=modelmanagement_['colsample_bylevel'])
                 self._model_management.set_job_type(self._dataframe_context.get_job_name()) #Project name
                 self._model_management.set_training_status(data="completed")# training status
                 self._model_management.set_no_of_independent_variables(data=x_train) #no of independent varables
                 self._model_management.set_target_level(self._targetLevel) # target column value
                 self._model_management.set_training_time(runtime) # run time
                 self._model_management.set_model_accuracy(round(metrics.accuracy_score(objs["actual"], objs["predicted"]),2))#accuracy
-                self._model_management.set_algorithm_name("Neural Network (TensorFlow)")#algorithm name
+                self._model_management.set_algorithm_name("LightGBM")#algorithm name
                 self._model_management.set_validation_method(str(validationDict["displayName"])+"("+str(validationDict["value"])+")")#validation method
                 self._model_management.set_target_variable(result_column)#target column name
-                self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M ')))#creation date
+                self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M')))#creation date
                 self._model_management.set_datasetName(self._datasetName)
+            else:
+                def set_model_params(x):
+                    #self._model_management.set_booster_function(data=modelmanagement_[x]['estimator__boosting_type'][0])
+                    # self._model_management.set_learning_rate(data=modelmanagement_['estimator__learning_rate'])
+                    # self._model_management.set_minimum_loss_reduction(data=modelmanagement_[x]['gamma'][0])
+                    # self._model_management.set_max_depth(data=modelmanagement_[x]['max_depth'][0])
+                    # self._model_management.set_minimum_child_weight(data=modelmanagement_['estimator__min_child_weight'])
+                    # self._model_management.set_subsampling_ratio(data=modelmanagement_[x]['subsample'][0])
+                    # self._model_management.set_subsample_for_each_tree(data=modelmanagement_['estimator__colsample_bytree'])
+                    # self._model_management.set_subsample_for_each_split(data=modelmanagement_['estimator__colsample_bylevel'])
+                    self._model_management.set_job_type(self._dataframe_context.get_job_name()) #Project name
+                    self._model_management.set_training_status(data="completed")# training status
+                    self._model_management.set_no_of_independent_variables(data=x_train) #no of independent varables
+                    self._model_management.set_target_level(self._targetLevel) # target column value
+                    self._model_management.set_training_time(runtime) # run time
+                    self._model_management.set_model_accuracy(round(metrics.accuracy_score(objs["actual"], objs["predicted"]),2))#accuracy
+                    self._model_management.set_algorithm_name("LightGBM")#algorithm name
+                    self._model_management.set_validation_method(str(validationDict["displayName"])+"("+str(validationDict["value"])+")")#validation method
+                    self._model_management.set_target_variable(result_column)#target column name
+                    self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M')))#creation date
+                    self._model_management.set_datasetName(self._datasetName)
+                try:
+                    set_model_params('param_grid')
+                except:
+                    set_model_params('param_distributions')
 
 
             modelManagementSummaryJson =[
 
-                        ["Project Name",self._model_management.get_job_type()],
-                        ["Algorithm",self._model_management.get_algorithm_name()],
-                        ["Training Status",self._model_management.get_training_status()],
-                        ["Accuracy",str(self._model_management.get_model_accuracy())],
-                        ["RunTime",str(self._model_management.get_training_time())],
-                        #["Owner",None],
-                        ["Created On",str(self._model_management.get_creation_date())]
+                            ["Project Name",self._model_management.get_job_type()],
+                            ["Algorithm",self._model_management.get_algorithm_name()],
+                            ["Training Status",self._model_management.get_training_status()],
+                            ["Accuracy",self._model_management.get_model_accuracy()],
+                            ["RunTime",self._model_management.get_training_time()],
+                            #["Owner",None],
+                            ["Created On",self._model_management.get_creation_date()]
 
-                        ]
+                            ]
 
             modelManagementModelSettingsJson =[
 
-                        ["Training Dataset",self._model_management.get_datasetName()],
-                        ["Target Column",self._model_management.get_target_variable()],
-                        ["Target Column Value",self._model_management.get_target_level()],
-                        ["Number Of Independent Variables",self._model_management.get_no_of_independent_variables()],
-                        ["Algorithm",self._model_management.get_algorithm_name()],
-                        ["Model Validation",self._model_management.get_validation_method()],
-                        ["batch_size",str(self._model_management.get_batch_size())],
-                        ["Loss",self._model_management.get_loss_function()],
-                        ["Optimizer",self._model_management.get_optimizer()],
-                        ["Epochs",self._model_management.get_no_epochs()],
-                        ["Metrics",self._model_management.get_model_evaluation_metrics()]
+                            ["Training Dataset",self._model_management.get_datasetName()],
+                            ["Target Column",self._model_management.get_target_variable()],
+                            ["Target Column Value",self._model_management.get_target_level()],
+                            ["Number Of Independent Variables",self._model_management.get_no_of_independent_variables()],
+                            ["Algorithm",self._model_management.get_algorithm_name()],
+                            ["Model Validation",self._model_management.get_validation_method()],
+                            ["Booster Function",self._model_management.get_booster_function()],
+                            ["Learning Rate",self._model_management.get_learning_rate()],
+                            ["Minimum Loss Reduction",self._model_management.get_minimum_loss_reduction()],
+                            ["Maximum Depth",self._model_management.get_max_depth()],
+                            ["Minimum Child Weight",self._model_management.get_minimum_child_weight()],
+                            ["Subsampling Ratio",self._model_management.get_subsampling_ratio()],
+                            ["Subsample of Every Column by each tree",self._model_management.get_subsample_for_each_tree()],
+                            ["Subsample of Every Column by each split",self._model_management.get_subsample_for_each_split()]
 
-                        ]
-            for i in range(len(list(modelmanagement_['hidden_layer_info'].keys()))):
-                string=""
-                key="layer No-"+str(i)+"-"+str(modelmanagement_["hidden_layer_info"][str(i)]["layer"]+"-")
-                for j in modelmanagement_["hidden_layer_info"][str(i)]:
-                    modelManagementModelSettingsJson.append([key+j+":",modelmanagement_["hidden_layer_info"][str(i)][j]])
+                            ]
 
 
-
-            tfOverviewCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_management_card_overview(self._model_management,modelManagementSummaryJson,modelManagementModelSettingsJson)]
-            tfPerformanceCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_management_cards(self._model_summary, endgame_roc_df)]
-            tfDeploymentCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_management_deploy_empty_card()]
-            tfCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_summary_cards(self._model_summary)]
-            TF_Overview_Node = NarrativesTree()
-            TF_Overview_Node.set_name("Overview")
-            TF_Performance_Node = NarrativesTree()
-            TF_Performance_Node.set_name("Performance")
-            TF_Deployment_Node = NarrativesTree()
-            TF_Deployment_Node.set_name("Deployment")
-            for card in tfOverviewCards:
-                TF_Overview_Node.add_a_card(card)
-            for card in tfPerformanceCards:
-                TF_Performance_Node.add_a_card(card)
-            for card in tfDeploymentCards:
-                TF_Deployment_Node.add_a_card(card)
-            for card in tfCards:
+            lgbmOverviewCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_management_card_overview(self._model_management,modelManagementSummaryJson,modelManagementModelSettingsJson)]
+            lgbmPerformanceCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_management_cards(self._model_summary, endgame_roc_df)]
+            lgbmDeploymentCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_management_deploy_empty_card()]
+            lgbmCards = [json.loads(CommonUtils.convert_python_object_to_json(cardObj)) for cardObj in MLUtils.create_model_summary_cards(self._model_summary)]
+            LGBM_Overview_Node = NarrativesTree()
+            LGBM_Overview_Node.set_name("Overview")
+            LGBM_Performance_Node = NarrativesTree()
+            LGBM_Performance_Node.set_name("Performance")
+            LGBM_Deployment_Node = NarrativesTree()
+            LGBM_Deployment_Node.set_name("Deployment")
+            for card in lgbmOverviewCards:
+                LGBM_Overview_Node.add_a_card(card)
+            for card in lgbmPerformanceCards:
+                LGBM_Performance_Node.add_a_card(card)
+            for card in lgbmDeploymentCards:
+                LGBM_Deployment_Node.add_a_card(card)
+            for card in lgbmCards:
                 self._prediction_narrative.add_a_card(card)
 
-            self._result_setter.set_model_summary({"Neural Network (TensorFlow)":json.loads(CommonUtils.convert_python_object_to_json(self._model_summary))})
-            self._result_setter.set_tf_model_summary(modelSummaryJson)
-            self._result_setter.set_tf_cards(tfCards)
-            self._result_setter.set_tf_nodes([TF_Overview_Node,TF_Performance_Node,TF_Deployment_Node])
-            self._result_setter.set_tf_fail_card({"Algorithm_Name":"Neural Network (TensorFlow)","success":"True"})
+            self._result_setter.set_model_summary({"lgbm":json.loads(CommonUtils.convert_python_object_to_json(self._model_summary))})
+            self._result_setter.set_lgbm_model_summary(modelSummaryJson)
+            self._result_setter.set_lgbm_cards(lgbmCards)
+            self._result_setter.set_lgbm_nodes([LGBM_Overview_Node,LGBM_Performance_Node,LGBM_Deployment_Node])
+            self._result_setter.set_lgbm_fail_card({"Algorithm_Name":"lgbm","success":"True"})
 
             CommonUtils.create_update_and_save_progress_message(self._dataframe_context,self._scriptWeightDict,self._scriptStages,self._slug,"completion","info",display=True,emptyBin=False,customMsg=None,weightKey="total")
 
-
+            # DataWriter.write_dict_as_json(self._spark, {"modelSummary":json.dumps(self._model_summary)}, summary_filepath)
+            # print self._model_summary
+            # CommonUtils.write_to_file(summary_filepath,json.dumps({"modelSummary":self._model_summary}))
 
 
     def Predict(self):
         self._scriptWeightDict = self._dataframe_context.get_ml_model_prediction_weight()
         self._scriptStages = {
             "initialization":{
-                "summary":"Initialized The Neural Network (TensorFlow) Scripts",
+                "summary":"Initialized The Lgbm Scripts",
                 "weight":2
                 },
             "prediction":{
-                "summary":"Neural Network (TensorFlow) Model Prediction Finished",
+                "summary":"Lgbm Model Prediction Finished",
                 "weight":2
                 },
             "frequency":{
@@ -748,30 +757,29 @@ class TensorFlowScript(object):
             if score_data_path.startswith("file"):
                 score_data_path = score_data_path[7:]
             trained_model_path = self._dataframe_context.get_model_path()
-            trained_model_path += "/"+self._dataframe_context.get_model_for_scoring()+".h5"
-
+            print(trained_model_path)
+            trained_model_path += "/"+self._dataframe_context.get_model_for_scoring()+".pkl"
+            threshold = self._dataframe_context.get_model_threshold()
             if trained_model_path.startswith("file"):
                 trained_model_path = trained_model_path[7:]
             score_summary_path = self._dataframe_context.get_score_path()+"/Summary/summary.json"
             if score_summary_path.startswith("file"):
                 score_summary_path = score_summary_path[7:]
+            trained_model = joblib.load(trained_model_path)
+            # pandas_df = self._data_frame.toPandas()
+            df = self._data_frame#.toPandas()
             model_columns = self._dataframe_context.get_model_features()
-            #trained_model = joblib.load(trained_model_path)
-            trained_model = tf.keras.models.load_model(trained_model_path)
-            try:
-                df = self._data_frame.toPandas()
-            except:
-                df = self._data_frame.copy()
-            # pandas_df = MLUtils.factorize_columns(df,[x for x in categorical_columns if x != result_column])
             pandas_df = MLUtils.create_dummy_columns(df,[x for x in categorical_columns if x != result_column])
             pandas_df = MLUtils.fill_missing_columns(pandas_df,model_columns,result_column)
             if uid_col:
                 pandas_df = pandas_df[[x for x in pandas_df.columns if x != uid_col]]
-            y_score = trained_model.predict_classes(pandas_df)
-            y_prob = trained_model.predict(pandas_df)
-            y_prob = MLUtils.calculate_predicted_probability(y_prob)
-            y_prob=list([round(x,2) for x in y_prob])
-            score = {"predicted_class":y_score,"predicted_probability":y_prob}
+
+            pandas_df = pandas_df[trained_model.feature_names]
+            y_score = trained_model.predict(pandas_df)
+            y_prob = trained_model.predict_proba(pandas_df)
+            y_score, predict_prob = MLUtils.calculate_predicted_probability_new(trained_model, y_prob, threshold, pandas_df)
+            predict_prob = list([round(x, 2) for x in predict_prob])
+            score = {"predicted_class": y_score, "predicted_probability": predict_prob, "class_probability": y_prob}
 
         df["predicted_class"] = score["predicted_class"]
         labelMappingDict = self._dataframe_context.get_label_map()
@@ -787,6 +795,7 @@ class TensorFlowScript(object):
         df_new['predicted_class'] = list(df[result_column])
         df_new['predicted_probability'] = list(df['predicted_probability'])
         df_new.to_csv(score_data_path,header=True,index=False)
+
         uidCol = self._dataframe_context.get_uid_column()
         if uidCol == None:
             uidCols = self._metaParser.get_suggested_uid_columns()
@@ -840,21 +849,23 @@ class TensorFlowScript(object):
             columns_to_drop = list(set(df.columns)-set(columns_to_keep))
         else:
             columns_to_drop += ["predicted_probability"]
-        if set(columns_to_drop) == set(df.columns):
-            columns_to_drop = ["predicted_probability"]
         columns_to_drop = [x for x in columns_to_drop if x in df.columns and x != result_column]
-        df.drop(columns_to_drop, axis=1, inplace=True)
+        columns_to_drop = ["predicted_probability"]
+        # df.drop(columns_to_drop, axis=1, inplace=True)
         # # Dropping predicted_probability column
         # df.drop('predicted_probability', axis=1, inplace=True)
+
         resultColLevelCount = dict(df[result_column].value_counts())
         # self._metaParser.update_level_counts(result_column,resultColLevelCount)
         self._metaParser.update_column_dict(result_column,{"LevelCount":resultColLevelCount,"numberOfUniqueValues":len(list(resultColLevelCount.keys()))})
         self._dataframe_context.set_story_on_scored_data(True)
         if self._pandas_flag:
+            df = df.drop(columns_to_drop, axis=1)
             scored_df = df.copy()
         else:
             SQLctx = SQLContext(sparkContext=self._spark.sparkContext, sparkSession=self._spark)
             scored_df = SQLctx.createDataFrame(df)
+        # spark_scored_df.write.csv(score_data_path+"/data",mode="overwrite",header=True)
         self._dataframe_context.update_consider_columns(columns_to_keep)
         df_helper = DataFrameHelper(scored_df, self._dataframe_context,self._metaParser)
         df_helper.set_params()
@@ -911,9 +922,8 @@ class TensorFlowScript(object):
                 print("DecisionTree Analysis Failed ")
         else:
             data_dict = {"npred": len(predictedClasses), "nactual": len(list(labelMappingDict.values()))}
-
             if data_dict["nactual"] > 2:
-                levelCountDict ={}
+                levelCountDict = {}
                 levelCountDict[predictedClasses[0]] = resultColLevelCount[predictedClasses[0]]
                 levelCountDict["Others"]  = sum([v for k,v in list(resultColLevelCount.items()) if k != predictedClasses[0]])
             else:
@@ -932,7 +942,7 @@ class TensorFlowScript(object):
             data_dict["topLevel"] = levelCountTuple[0]
             data_dict["secondLevel"] = levelCountTuple[1]
             maincardSummary = NarrativesUtils.get_template_output("/apps/",'scorewithoutdtree.html',data_dict)
-
+            print(data_dict)
             main_card = NormalCard()
             main_card_data = []
             main_card_narrative = NarrativesUtils.block_splitter(maincardSummary,"|~NEWBLOCK~|")

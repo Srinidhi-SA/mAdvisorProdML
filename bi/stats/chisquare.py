@@ -102,9 +102,8 @@ class ChiSquare(object):
         for m in all_measures:
             try:
                 if self._pandas_flag :
-                    if len(self._data_frame[m].unique())>self._analysisDict['Dimension vs. Dimension']['binSetting']['binCardinality']:
-                        chisquare_result = self.test_measures(targetDimension, m)
-                        df_chisquare_result.add_chisquare_result(targetDimension, m, chisquare_result)
+                    chisquare_result = self.test_measures(targetDimension, m)
+                    df_chisquare_result.add_chisquare_result(targetDimension, m, chisquare_result)
                 else:
                     if self._data_frame.select(F.countDistinct(m)).collect()[0][0]>self._analysisDict['Dimension vs. Dimension']['binSetting']['binCardinality']:
                         chisquare_result = self.test_measures(targetDimension, m)
@@ -158,7 +157,7 @@ class ChiSquare(object):
                     minval = int(measureSummaryDict["min"])
                     step = (maxval - minval) / 5.0
                     splits = [round(math.floor(minval)), round(minval + step), round(minval + (step * 2)),
-                              round(minval + (step * 3)), round(minval + (step * 4)), round(math.ceil(maxval))]
+                              round(minval + (step * 3)), round(minval + (step * 4)), round(math.ceil(maxval+0.01))]
                     splits = list(set(splits))
                     splits.sort()
                     self._data_frame['bucketedColumn'] = pd.cut(self._data_frame[testMeasure], bins=splits,labels=list(range(len(splits)-1)), retbins=True, right=False)[0]
@@ -176,7 +175,7 @@ class ChiSquare(object):
                         minval = float(measureSummaryDict["min"])
                         step = (maxval - minval) / 5.0
                         splits = [math.floor(minval), minval + step, minval + (step * 2), minval + (step * 3),
-                                  minval + (step * 4), math.ceil(maxval)]
+                                minval + (step * 4), math.ceil(maxval+0.01)]
                         df['bucketedColumn'] = pd.cut(df[testMeasure], bins=splits, labels=list(range(len(splits)-1)), retbins=True, right=False)[0]
                         df = df.dropna()
                         pivot_table = pd.crosstab([df[targetDimension]], df['bucketedColumn'])
@@ -191,7 +190,7 @@ class ChiSquare(object):
                     maxval = int(measureSummaryDict["max"])
                     minval = int(measureSummaryDict["min"])
                     step = (maxval - minval) / 5.0
-                    splits = [round(math.floor(minval)), round(minval + step), round(minval + (step * 2)), round(minval + (step * 3)), round(minval + (step * 4)), round(math.ceil(maxval))]
+                    splits = [round(math.floor(minval)), round(minval + step), round(minval + (step * 2)), round(minval + (step * 3)), round(minval + (step * 4)), round(math.ceil(maxval+0.01))]
                     splits = list(set(splits))
                     splits.sort()
                     bucketizer = Bucketizer(splits=splits, inputCol=testMeasure, outputCol="bucketedColumn")
@@ -209,7 +208,7 @@ class ChiSquare(object):
                     minval = float(measureSummaryDict["min"])
                     step = (maxval - minval) / 5.0
                     splits = [math.floor(minval), minval + step, minval + (step * 2), minval + (step * 3),
-                              minval + (step * 4), math.ceil(maxval)]
+                              minval + (step * 4), math.ceil(maxval+0.01)]
                     bucketizer = Bucketizer(splits=splits, inputCol=testMeasure, outputCol="bucketedColumn")
                     # bucketedData = bucketizer.transform(df)
                     bucketedData = bucketizer.transform(df.na.drop(subset=testMeasure))

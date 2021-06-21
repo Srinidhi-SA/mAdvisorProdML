@@ -21,7 +21,10 @@ try:
 except:
     import pickle
 
-from sklearn.externals import joblib
+try:
+    from sklearn.externals import joblib
+except:
+    import joblib
 from sklearn import metrics
 from sklearn2pmml import sklearn2pmml
 from sklearn2pmml import PMMLPipeline
@@ -57,6 +60,7 @@ class XgboostScript(object):
         self._dataframe_helper = df_helper
         self._dataframe_context = df_context
         self._pandas_flag = df_context._pandas_flag
+        self._actual_df = df_context.get_actual_df()
         self._spark = spark
         self._model_summary = {"confusion_matrix":{},"precision_recall_stats":{}}
         self._score_summary = {}
@@ -71,7 +75,8 @@ class XgboostScript(object):
         self._messageURL = self._dataframe_context.get_message_url()
         self._scriptWeightDict = self._dataframe_context.get_ml_model_training_weight()
         self._mlEnv = mlEnvironment
-
+        self._model=None
+        self._threshold = False
 
         self._scriptStages = {
             "initialization":{
@@ -173,72 +178,70 @@ class XgboostScript(object):
                 print(params_grid)
                 if hyperParamAlgoName == "gridsearchcv":
                     clfGrid = GridSearchCV(clf,params_grid)
-                    gridParams = clfGrid.get_params()
-                    hyperParamInitParam = {k:v for k,v in list(hyperParamInitParam.items()) if k in gridParams}
-                    clfGrid.set_params(**hyperParamInitParam)
-                    modelmanagement_=clfGrid.get_params()
-                    # clfGrid.fit(x_train,y_train)
-                    grid_param={}
-                    grid_param['params']=ParameterGrid(params_grid)
-                    #bestEstimator = clfGrid.best_estimator_
-                    modelFilepath = "/".join(model_filepath.split("/")[:-1])
-                    sklearnHyperParameterResultObj = SklearnGridSearchResult(grid_param,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
-                    resultArray = sklearnHyperParameterResultObj.train_and_save_models()
-                    #print resultArray
-
-                    resultArrayDict = {
-                                        "Model_Id" : [],
-                                        "Algorithm_Name": [],
-                                        "Metric_Selected": [],
-                                        "Accuracy": [],
-                                        "Precision": [],
-                                        "Recall": [],
-                                        "ROC_AUC": [],
-                                        "Run_Time": []
-                                        }
-                    for val in resultArray:
-                        resultArrayDict["Model_Id"].append(val["Model Id"])
-                        resultArrayDict["Algorithm_Name"].append(val["algorithmName"])
-                        resultArrayDict["Metric_Selected"].append(val["comparisonMetricUsed"])
-                        resultArrayDict["Accuracy"].append(val["Accuracy"])
-                        resultArrayDict["Precision"].append(val["Precision"])
-                        resultArrayDict["Recall"].append(val["Recall"])
-                        resultArrayDict["ROC_AUC"].append(val["ROC-AUC"])
-                        resultArrayDict["Run_Time"].append(val["Run Time(Secs)"])
-                        comparison_metric_used = val["comparisonMetricUsed"]
-
-                    resultArraydf = pd.DataFrame.from_dict(resultArrayDict)
-
-                    if comparison_metric_used == "Accuracy":
-                        resultArraydf = resultArraydf.sort_values(by = ['Accuracy'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-                    elif comparison_metric_used == "Recall":
-                        resultArraydf = resultArraydf.sort_values(by = ['Recall'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-                    elif comparison_metric_used == "Precision":
-                        resultArraydf = resultArraydf.sort_values(by = ['Precision'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-                    elif comparison_metric_used == "ROC-AUC":
-                        resultArraydf = resultArraydf.sort_values(by = ['ROC_AUC'], ascending = False)
-                        best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
-
-                    print("BEST MODEL BY CHOSEN METRIC - ", best_model_by_metric_chosen)
-                    print(resultArraydf.head(20))
-                    hyper_st = time.time()
-                    bestEstimator = sklearnHyperParameterResultObj.getBestModel()
-                    bestParams = sklearnHyperParameterResultObj.getBestParam()
-                    bestEstimator = bestEstimator.set_params(**bestParams)
-                    bestEstimator.fit(x_train,y_train)
-                    bestEstimator.feature_names = list(x_train.columns.values)
-
-                    self._result_setter.set_hyper_parameter_results(self._slug,resultArray)
-                    self._result_setter.set_metadata_parallel_coordinates(self._slug,{"ignoreList":sklearnHyperParameterResultObj.get_ignore_list(),"hideColumns":sklearnHyperParameterResultObj.get_hide_columns(),"metricColName":sklearnHyperParameterResultObj.get_comparison_metric_colname(),"columnOrder":sklearnHyperParameterResultObj.get_keep_columns()})
                 elif hyperParamAlgoName == "randomsearchcv":
-                    hyper_st = time.time()
-                    clfRand = RandomizedSearchCV(clf,params_grid)
-                    clfRand.set_params(**hyperParamInitParam)
-                    modelmanagement_=clfRand.get_params()
-                    bestEstimator = None
+                    clfGrid = RandomizedSearchCV(clf,params_grid)
+                gridParams = clfGrid.get_params()
+                hyperParamInitParam = {k:v for k,v in list(hyperParamInitParam.items()) if k in gridParams}
+                clfGrid.set_params(**hyperParamInitParam)
+                modelmanagement_=clfGrid.get_params()
+                #clfGrid.fit(x_train,y_train)
+                grid_param={}
+                grid_param['params']=ParameterGrid(params_grid)
+                #bestEstimator = clfGrid.best_estimator_
+                modelFilepath = "/".join(model_filepath.split("/")[:-1])
+                #sklearnHyperParameterResultObj = SklearnGridSearchResult(clfGrid.cv_results_,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
+                sklearnHyperParameterResultObj = SklearnGridSearchResult(grid_param,clf,x_train,x_test,y_train,y_test,appType,modelFilepath,levels,posLabel,evaluationMetricDict)
+                resultArray = sklearnHyperParameterResultObj.train_and_save_models()
+                #print resultArray
+
+                resultArrayDict = {
+                                    "Model_Id" : [],
+                                    "Algorithm_Name": [],
+                                    "Metric_Selected": [],
+                                    "Accuracy": [],
+                                    "Precision": [],
+                                    "Recall": [],
+                                    "ROC_AUC": [],
+                                    "Run_Time": []
+                                    }
+                for val in resultArray:
+                    resultArrayDict["Model_Id"].append(val["Model Id"])
+                    resultArrayDict["Algorithm_Name"].append(val["algorithmName"])
+                    resultArrayDict["Metric_Selected"].append(val["comparisonMetricUsed"])
+                    resultArrayDict["Accuracy"].append(val["Accuracy"])
+                    resultArrayDict["Precision"].append(val["Precision"])
+                    resultArrayDict["Recall"].append(val["Recall"])
+                    resultArrayDict["ROC_AUC"].append(val["ROC-AUC"])
+                    resultArrayDict["Run_Time"].append(val["Run Time(Secs)"])
+                    comparison_metric_used = val["comparisonMetricUsed"]
+
+                resultArraydf = pd.DataFrame.from_dict(resultArrayDict)
+
+                if comparison_metric_used == "Accuracy":
+                    resultArraydf = resultArraydf.sort_values(by = ['Accuracy'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                elif comparison_metric_used == "Recall":
+                    resultArraydf = resultArraydf.sort_values(by = ['Recall'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                elif comparison_metric_used == "Precision":
+                    resultArraydf = resultArraydf.sort_values(by = ['Precision'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+                elif comparison_metric_used == "ROC-AUC":
+                    resultArraydf = resultArraydf.sort_values(by = ['ROC_AUC'], ascending = False)
+                    best_model_by_metric_chosen = resultArraydf["Model_Id"].iloc[0]
+
+                print("BEST MODEL BY CHOSEN METRIC - ", best_model_by_metric_chosen)
+                print(resultArraydf.head(20))
+                hyper_st=time.time()
+                bestEstimator = sklearnHyperParameterResultObj.getBestModel()
+                bestParams = sklearnHyperParameterResultObj.getBestParam()
+                bestEstimator = bestEstimator.set_params(**bestParams)
+                bestEstimator.fit(x_train,y_train)
+                bestEstimator.feature_names = list(x_train.columns.values)
+
+                self._result_setter.set_hyper_parameter_results(self._slug,resultArray)
+                self._result_setter.set_metadata_parallel_coordinates(self._slug,{"ignoreList":sklearnHyperParameterResultObj.get_ignore_list(),"hideColumns":sklearnHyperParameterResultObj.get_hide_columns(),"metricColName":sklearnHyperParameterResultObj.get_comparison_metric_colname(),"columnOrder":sklearnHyperParameterResultObj.get_keep_columns()})
+
             else:
                 evaluationMetricDict =algoSetting.get_evaluvation_metric(Type="CLASSIFICATION")
                 evaluationMetricDict["displayName"] = GLOBALSETTINGS.SKLEARN_EVAL_METRIC_NAME_DISPLAY_MAP[evaluationMetricDict["name"]]
@@ -246,6 +249,7 @@ class XgboostScript(object):
                 algoParams = algoSetting.get_params_dict()
 
                 if automl_enable:
+                    hyperParamAlgoName = 'randomsearchcv'
                     params_grid={ "learning_rate"      : [0.05, 0.10, 0.15,0.20,0.25,0.30],
                                   "booster"            : ['gbtree'],
                                   "max_depth"          : [ 3, 4, 6, 8,10],
@@ -269,8 +273,14 @@ class XgboostScript(object):
                     kFoldClass.train_and_save_result()
                     kFoldOutput = kFoldClass.get_kfold_result()
                     bestEstimator = kFoldClass.get_best_estimator()
+                    y_test = kFoldClass.get_ytest()[0]
+                    y_score = kFoldClass.get_yscore()[0]
+                    y_prob = kFoldClass.get_yprob()[0]
+                    self._threshold = kFoldClass.get_threshold()[0]
+                    bestEstimator.fit(x_train, y_train)
                     print("XGBOOST AuTO ML Random CV#######################3")
                 else:
+                    hyperParamAlgoName = 'None'
                     algoParams = {k:v for k,v in list(algoParams.items()) if k in list(clf.get_params().keys())}
                     clf.set_params(**algoParams)
                     modelmanagement_=clf.get_params()
@@ -293,12 +303,18 @@ class XgboostScript(object):
 
             # clf.fit(x_train, y_train)
             # bestEstimator = clf
-            trainingTime = time.time()-st
-            y_score = bestEstimator.predict(x_test)
             try:
-                y_prob = bestEstimator.predict_proba(x_test)
+                self._model = bestEstimator.best_estimator_
             except:
-                y_prob = [0]*len(y_score)
+                self._model = bestEstimator
+
+            trainingTime = time.time()-st
+            if not automl_enable:
+                y_score = bestEstimator.predict(x_test)
+                try:
+                    y_prob = bestEstimator.predict_proba(x_test)
+                except:
+                    y_prob = [0]*len(y_score)
 
             # overall_precision_recall = MLUtils.calculate_overall_precision_recall(y_test,y_score,targetLevel = self._targetLevel)
             # print overall_precision_recall
@@ -472,13 +488,15 @@ class XgboostScript(object):
             self._model_summary.set_num_trees(100)
             self._model_summary.set_num_rules(300)
             self._model_summary.set_target_level(self._targetLevel)
+
             if not algoSetting.is_hyperparameter_tuning_enabled():
                 modelDropDownObj = {
                             "name":self._model_summary.get_algorithm_name(),
                             "evaluationMetricValue": locals()[evaluationMetricDict["name"]], # self._model_summary.get_model_accuracy(),
                             "evaluationMetricName": evaluationMetricDict["name"],
                             "slug":self._model_summary.get_slug(),
-                            "Model Id":modelName
+                            "Model Id":modelName,
+                            "threshold": str(self._threshold)
                             }
 
                 modelSummaryJson = {
@@ -503,7 +521,8 @@ class XgboostScript(object):
                     "modelFeatureList":self._model_summary.get_feature_list(),
                     "levelMapping":self._model_summary.get_level_map_dict(),
                     "slug":self._model_summary.get_slug(),
-                    "name":self._model_summary.get_algorithm_name()
+                    "name":self._model_summary.get_algorithm_name(),
+                    "hyperparamalgoname":hyperParamAlgoName
                 }
 
             self._model_management = MLModelSummary()
@@ -528,6 +547,7 @@ class XgboostScript(object):
                 self._model_management.set_target_variable(result_column)#target column name
                 self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M')))#creation date
                 self._model_management.set_datasetName(self._datasetName)
+                self._model_management.set_hyperParamAlgoName(hyperParamAlgoName)
             else:
                 def set_model_params(x):
                     self._model_management.set_booster_function(data=modelmanagement_[x]['booster'][0])
@@ -549,6 +569,7 @@ class XgboostScript(object):
                     self._model_management.set_target_variable(result_column)#target column name
                     self._model_management.set_creation_date(data=str(datetime.now().strftime('%b %d ,%Y  %H:%M')))#creation date
                     self._model_management.set_datasetName(self._datasetName)
+                    self._model_management.set_hyperParamAlgoName(hyperParamAlgoName)
                 try:
                     set_model_params('param_grid')
                 except:
@@ -574,6 +595,7 @@ class XgboostScript(object):
                             ["Target Column Value",self._model_management.get_target_level()],
                             ["Number Of Independent Variables",self._model_management.get_no_of_independent_variables()],
                             ["Algorithm",self._model_management.get_algorithm_name()],
+                            ["HyperParamAlgoName",self._model_management.get_hyperParamAlgoName()],
                             ["Model Validation",self._model_management.get_validation_method()],
                             ["Booster Function",self._model_management.get_booster_function()],
                             ["Learning Rate",self._model_management.get_learning_rate()],
@@ -608,6 +630,7 @@ class XgboostScript(object):
 
             self._result_setter.set_model_summary({"xgboost":json.loads(CommonUtils.convert_python_object_to_json(self._model_summary))})
             self._result_setter.set_xgboost_model_summary(modelSummaryJson)
+            # self._result_setter.set_xgboost_management_summary(modelManagementJson)
             self._result_setter.set_xgb_cards(xgbCards)
             self._result_setter.set_xgb_nodes([XGB_Overview_Node,XGB_Performance_Node,XGB_Deployment_Node])
             self._result_setter.set_xgb_fail_card({"Algorithm_Name":"xgboost","success":"True"})
@@ -686,7 +709,12 @@ class XgboostScript(object):
             trained_model_path = self._dataframe_context.get_model_path()
             print(trained_model_path)
             trained_model_path += "/"+self._dataframe_context.get_model_for_scoring()+".pkl"
-
+            if self._dataframe_context.get_trainerMode() == "autoML":
+                automl_enable=True
+            else:
+                automl_enable=False
+            if automl_enable:
+                threshold = self._dataframe_context.get_model_threshold()
             if trained_model_path.startswith("file"):
                 trained_model_path = trained_model_path[7:]
             score_summary_path = self._dataframe_context.get_score_path()+"/Summary/summary.json"
@@ -711,9 +739,12 @@ class XgboostScript(object):
             except:
                 y_score = trained_model.predict(pandas_df)
                 y_prob = trained_model.predict_proba(pandas_df)
-            y_prob = MLUtils.calculate_predicted_probability(y_prob)
-            y_prob=list([round(x,2) for x in y_prob])
-            score = {"predicted_class":y_score,"predicted_probability":y_prob}
+            if automl_enable:
+                y_score, predict_prob = MLUtils.calculate_predicted_probability_new(trained_model, y_prob, threshold, pandas_df)
+            else:
+                y_score, predict_prob = MLUtils.calculate_predicted_probability_new_analyst(y_prob)
+            predict_prob = list([round(x, 2) for x in predict_prob])
+            score = {"predicted_class": y_score, "predicted_probability": predict_prob, "class_probability": y_prob}
 
         df["predicted_class"] = score["predicted_class"]
         labelMappingDict = self._dataframe_context.get_label_map()
@@ -724,7 +755,11 @@ class XgboostScript(object):
         if result_column in df.columns:
             df.drop(result_column, axis=1, inplace=True)
         df = df.rename(index=str, columns={"predicted_class": result_column})
-        df.to_csv(score_data_path,header=True,index=False)
+        df = df.round({'predicted_probability':2})
+        df_new = self._actual_df.copy(deep=True)
+        df_new['predicted_class'] = list(df[result_column])
+        df_new['predicted_probability'] = list(df['predicted_probability'])
+        df_new.to_csv(score_data_path,header=True,index=False)
 
         uidCol = self._dataframe_context.get_uid_column()
         if uidCol == None:
